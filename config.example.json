@@ -1,0 +1,23 @@
+{
+  "_comment": "Copy to config.json (or point to another path with the ELENXA_CONFIG environment variable). This file only contains database and skill_dir; LLM and other configuration go through environment variables or in-app settings, not this file.",
+
+  "_comment_database": "PostgreSQL connection. Precedence: environment variable ELENXA_PG_DSN > database in this file. Choose one of two forms: (A) fill in the separate fields below; (B) fill in only database.dsn as a single full connection string.",
+  "database": {
+    "host": "127.0.0.1",
+    "port": 5433,
+    "user": "elenxa",
+    "password": "",
+    "dbname": "elenxa",
+    "sslmode": "disable"
+  },
+
+  "_comment_database_dsn": "Form (B): delete the database above and use a full DSN instead. When dsn is non-empty, the separate fields are ignored.",
+  "_example_database_dsn": {
+    "database": {
+      "dsn": "postgres://user:pass@db.example.com:5432/elenxa?sslmode=require"
+    }
+  },
+
+  "_comment_skill_dir": "skill root directory (one skill per subdirectory, containing SKILL.md). Precedence: environment variable ELENXA_SKILL_DIR > this field > default (skills/ next to the executable). Leave empty or delete this field to use the default. Relative paths are resolved against the current working directory.",
+  "skill_dir": "/opt/elenxa/skills"
+}

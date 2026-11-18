@@ -1,0 +1,16 @@
+.git
+**/node_modules
+**/.next
+web/out
+out
+server/webui/dist
+/elenxa
+/elenxa-browser-mcp
+dist
+data
+# root .env holds POSTGRES_PASSWORD / API keys — never send it to the build
+# context (web/.env only sets NEXT_TELEMETRY_DISABLED and is kept).
+/.env
+*.log
+*.db
+transcripts

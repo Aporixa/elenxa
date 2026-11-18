@@ -1,0 +1,4 @@
+*.bat text eol=crlf
+*.sh  text eol=lf
+# Contains literal NUL key separators; diff it as text anyway.
+web/src/components/exploration-graph.tsx diff
