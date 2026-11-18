@@ -57,7 +57,7 @@ The global "Approval records", the in-task "Interception approvals" and the appr
 ### Option 1: install script (recommended)
 
 ```bash
-cd elenxa-clean
+cd elenxa
 go mod vendor
 ./install.sh
 ```
