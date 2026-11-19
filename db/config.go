@@ -987,7 +987,9 @@ func (d *DB) SetAgentSkillVisibility(agentID int64, names []string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM agent_skill_visibility WHERE agent_id=$1`, agentID); err != nil {
+	// Keep explicit disabled rows. Built-in visibility seeding uses insert-if-absent;
+	// deleting rows here would silently re-enable a skill on the next restart.
+	if _, err := tx.Exec(`UPDATE agent_skill_visibility SET enabled=false WHERE agent_id=$1`, agentID); err != nil {
 		return err
 	}
 	for _, name := range names {
@@ -1006,7 +1008,8 @@ func (d *DB) ToggleSkillVisibility(agentID int64, skillName string, on bool) err
 ON CONFLICT (agent_id,skill_name) DO UPDATE SET enabled=true`, agentID, skillName)
 		return err
 	}
-	_, err := d.Exec(`DELETE FROM agent_skill_visibility WHERE agent_id=$1 AND skill_name=$2`, agentID, skillName)
+	_, err := d.Exec(`INSERT INTO agent_skill_visibility(agent_id,skill_name,enabled) VALUES ($1,$2,false)
+ON CONFLICT (agent_id,skill_name) DO UPDATE SET enabled=false`, agentID, skillName)
 	return err
 }
 

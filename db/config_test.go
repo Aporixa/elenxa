@@ -173,6 +173,19 @@ func TestConfigStores(t *testing.T) {
 	if len(names) != 1 || names[0] != "t-skill" {
 		t.Fatalf("agent visible skills: %+v", names)
 	}
+	if err := d.ToggleSkillVisibility(ag.ID, "t-skill", false); err != nil {
+		t.Fatal(err)
+	}
+	var enabled bool
+	if err := d.QueryRow(`SELECT enabled FROM agent_skill_visibility WHERE agent_id=$1 AND skill_name='t-skill'`, ag.ID).Scan(&enabled); err != nil {
+		t.Fatalf("disabled skill row should persist: %v", err)
+	}
+	if enabled {
+		t.Fatal("disabled skill row remained enabled")
+	}
+	if err := d.ToggleSkillVisibility(ag.ID, "t-skill", true); err != nil {
+		t.Fatal(err)
+	}
 	if err := d.DeleteSkillVisibility("t-skill"); err != nil {
 		t.Fatal(err)
 	}

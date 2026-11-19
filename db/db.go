@@ -324,7 +324,10 @@ ON CONFLICT DO NOTHING`, r.kind, r.pattern, r.note); err != nil {
 // binding. Skills omitted here (e.g. playwright-cli) ship invisible by default —
 // the user turns them on per-agent when needed.
 var builtinSkillVisibility = map[string][]string{
-	"api-recon": {"auto", "pentest", "worker"},
+	"api-recon":                {"auto", "pentest", "worker"},
+	"adversarial-environment": {"auto", "pentest", "worker"},
+	"ai-target-research":       {"auto", "pentest", "worker"},
+	"lab-operations":           {"auto", "pentest", "worker"},
 }
 
 // seedBuiltinSkillVisibility binds the shipped built-in skills to their default

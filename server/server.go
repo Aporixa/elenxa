@@ -706,6 +706,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/task-archives/{id}", s.queueTaskArchiveDelete)
 	mux.HandleFunc("POST /api/task-archives/delete/batch", s.deleteTaskArchivesBatch)
 	mux.HandleFunc("GET /api/tasks/{id}/coverage", s.taskCoverage)
+	mux.HandleFunc("GET /api/tasks/{id}/research-metrics", s.taskResearchMetrics)
 	mux.HandleFunc("GET /api/tasks/{id}/coverage-graph", s.taskCoverageGraph)
 	mux.HandleFunc("GET /api/tasks/{id}/asset-refs", s.taskAssetRefs)
 	mux.HandleFunc("POST /api/tasks/{id}/assets", s.attachTaskAssets)
