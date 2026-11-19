@@ -645,7 +645,7 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 	return []actool.CoreTool{
 		// list_findings is kept: check this task's confirmed findings before reporting, to avoid reporting the same finding twice.
 		t.listFindings(),
-		t.addFinding(), t.recordFact(),
+		t.addFinding(), t.recordFact(), t.recordResearchEvent(),
 		// asset management (handlers guard nil store internally).
 		// add_company_scope is not given to worker: defining company asset scope is the job of planner/main/Auto; worker only executes exploration.
 		t.insertAssets(), t.listAssets(),
@@ -674,7 +674,7 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		t.setConstraints(),
 		// asset management (handlers guard nil store internally)
 		t.insertAssets(), t.addCompanyScope(), t.listAssets(),
-		t.addFinding(), t.recordFact(),
+		t.addFinding(), t.recordFact(), t.recordResearchEvent(),
 		t.addTaskScope(),
 		// list_untested_assets: query untested assets in this task's scope on demand (type + pagination) and decide yourself whether to test them.
 		t.listUntestedAssets(),

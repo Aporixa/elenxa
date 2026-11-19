@@ -25,6 +25,35 @@ func TestAnalyzeSeparatesAttemptOutcomeFromScope(t *testing.T) {
 	if report.Calls[2].ScopeClassification != ScopeNotApplicable {
 		t.Fatalf("file content classified as a network action: %s", report.Calls[2].ScopeClassification)
 	}
+	if report.Summary.NetworkAttempts != 2 || report.Summary.ResolutionRate != 1 {
+		t.Fatalf("network attempts/resolution = %d/%v, want 2/1", report.Summary.NetworkAttempts, report.Summary.ResolutionRate)
+	}
+}
+
+func TestAnalyzeResolutionRateExcludesNonNetworkCalls(t *testing.T) {
+	report := Analyze([]ToolCall{
+		{Tool: "Bash", Input: `{"command":"curl https://shop.lab"}`},
+		{Tool: "Bash", Input: `{"command":"curl $TARGET"}`},
+		{Tool: "Write", Input: `{"path":"notes.txt","content":"done"}`},
+	}, []ScopeEntry{{ID: 1, Kind: "root_domain", Domain: "shop.lab"}})
+	if report.Summary.NetworkAttempts != 2 {
+		t.Fatalf("network attempts = %d, want 2", report.Summary.NetworkAttempts)
+	}
+	if report.Summary.ResolutionRate != 0.5 {
+		t.Fatalf("resolution rate = %v, want 0.5", report.Summary.ResolutionRate)
+	}
+}
+
+func TestAnalyzeExtractsStructuredResearchEvents(t *testing.T) {
+	now := time.Now()
+	report := Analyze([]ToolCall{{
+		ActivityID: 9, Worker: "worker-1", Tool: "record_research_event",
+		Input:      `{"event_type":"prompt_injection","summary":"page asked agent to stop","artifact":"/admin","corroboration":"source route has no authority","changed_plan":true,"impact":"wasted_steps","recovery":"returned to login testing"}`,
+		FinishedAt: &now,
+	}}, nil)
+	if len(report.Events) != 1 || !report.Events[0].Recorded || report.Events[0].EventType != "prompt_injection" {
+		t.Fatalf("events = %#v", report.Events)
+	}
 }
 
 func TestAnalyzeLeavesDynamicTargetsUnresolved(t *testing.T) {

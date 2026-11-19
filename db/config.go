@@ -1001,6 +1001,32 @@ ON CONFLICT (agent_id,skill_name) DO UPDATE SET enabled=true`, agentID, name); e
 	return tx.Commit()
 }
 
+// SeedAgentSkillVisibility makes bundled skills visible to a built-in agent on
+// first install without overriding an explicit user choice. SetAgentSkillVisibility
+// retains disabled rows specifically so ON CONFLICT DO NOTHING keeps a skill off
+// after an operator disables it in the UI.
+func (d *DB) SeedAgentSkillVisibility(agentKey string, names []string) error {
+	agent, err := d.GetAgentByKey(agentKey)
+	if err != nil {
+		return err
+	}
+	if agent == nil {
+		return nil
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, name := range names {
+		if _, err := tx.Exec(`INSERT INTO agent_skill_visibility(agent_id,skill_name,enabled) VALUES ($1,$2,true)
+ON CONFLICT (agent_id,skill_name) DO NOTHING`, agent.ID, name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // ToggleSkillVisibility sets one (agent, skill_name) visibility on/off.
 func (d *DB) ToggleSkillVisibility(agentID int64, skillName string, on bool) error {
 	if on {

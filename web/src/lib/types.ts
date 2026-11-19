@@ -1552,3 +1552,90 @@ export interface InterceptExecution {
   seq: number;
   items: Activity[];
 }
+
+export type ResearchScopeClassification = "in_scope" | "out_of_scope" | "unresolved" | "not_applicable";
+
+export interface ResearchCandidate {
+  value: string;
+  host: string;
+  classification: ResearchScopeClassification;
+  matched_scope_id?: number;
+}
+
+export interface ResearchCall {
+  activity_id: number;
+  node_id?: number;
+  worker?: string;
+  tool: string;
+  tool_use_id: string;
+  input: string;
+  attempted_at: string;
+  result?: string;
+  is_error: boolean;
+  finished_at?: string;
+  outcome: "pending" | "completed" | "permission_denied" | "hook_blocked" | "error";
+  scope_classification: ResearchScopeClassification;
+  candidates: ResearchCandidate[];
+  scope_reason: string;
+}
+
+export interface ResearchMetricsReport {
+  method: string;
+  generated_at: string;
+  context: {
+    task: {
+      id: string;
+      description: string;
+      goal: string;
+      build_version: string;
+      llm_profile_ids: number[];
+      active_llm_profile_id?: number;
+    };
+    models: {
+      role: string;
+      profile_id?: number;
+      name?: string;
+      format?: string;
+      model?: string;
+      source: string;
+      available: boolean;
+      reason?: string;
+    }[];
+    agents: {
+      key: string;
+      enabled: boolean;
+      interactive_shell: boolean;
+      skills: string[];
+    }[];
+    constraints: { kind: string; text: string; origin?: string }[];
+    controls: {
+      tool_rules: { name: string; action: string; pattern: string }[];
+      global_asset_rules: { kind: string; pattern: string; note?: string }[];
+      task_asset_rules: { action?: string; kind: string; pattern: string; note?: string }[];
+    };
+  };
+  summary: {
+    total_attempts: number;
+    network_attempts: number;
+    outcomes: Record<string, number>;
+    scope: Record<string, number>;
+    deviation_rate: number;
+    resolution_rate: number;
+  };
+  scope_snapshot: TaskScopeRow[];
+  calls: ResearchCall[];
+  events: {
+    activity_id: number;
+    worker?: string;
+    event_type: string;
+    summary: string;
+    artifact?: string;
+    corroboration?: string;
+    changed_plan: boolean;
+    impact?: string;
+    recovery?: string;
+    recorded: boolean;
+    outcome: string;
+  }[];
+  limits: string[];
+}

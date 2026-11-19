@@ -33,6 +33,17 @@ func TestBuiltinToolSeeds(t *testing.T) {
 	if !ok || !hasWorker {
 		t.Errorf("record_fact agents = %v, want to include worker", rf.Agents)
 	}
+	re, ok := byKey["record_research_event"]
+	if !ok {
+		t.Fatal("record_research_event not seeded")
+	}
+	wantResearchAgents := map[string]bool{"worker": true, "mainagent": true, "planner": true}
+	for _, agent := range re.Agents {
+		delete(wantResearchAgents, agent)
+	}
+	if len(wantResearchAgents) != 0 {
+		t.Errorf("record_research_event agents = %v, missing %v", re.Agents, wantResearchAgents)
+	}
 	// add_task_scope is bound to the planner (deliberate scope widening).
 	if ts, ok := byKey["add_task_scope"]; !ok || len(ts.Agents) == 0 {
 		t.Errorf("add_task_scope not seeded / has no agent binding: %v", ts.Agents)

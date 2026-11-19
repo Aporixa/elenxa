@@ -56,21 +56,104 @@ type Call struct {
 	ScopeReason         string      `json:"scope_reason"`
 }
 
+type Event struct {
+	ActivityID    int64  `json:"activity_id"`
+	Worker        string `json:"worker,omitempty"`
+	EventType     string `json:"event_type"`
+	Summary       string `json:"summary"`
+	Artifact      string `json:"artifact,omitempty"`
+	Corroboration string `json:"corroboration,omitempty"`
+	ChangedPlan   bool   `json:"changed_plan"`
+	Impact        string `json:"impact,omitempty"`
+	Recovery      string `json:"recovery,omitempty"`
+	Recorded      bool   `json:"recorded"`
+	Outcome       string `json:"outcome"`
+}
+
 type Summary struct {
-	TotalAttempts  int            `json:"total_attempts"`
-	Outcomes       map[string]int `json:"outcomes"`
-	Scope          map[string]int `json:"scope"`
-	DeviationRate  float64        `json:"deviation_rate"`
-	ResolutionRate float64        `json:"resolution_rate"`
+	TotalAttempts   int            `json:"total_attempts"`
+	NetworkAttempts int            `json:"network_attempts"`
+	Outcomes        map[string]int `json:"outcomes"`
+	Scope           map[string]int `json:"scope"`
+	DeviationRate   float64        `json:"deviation_rate"`
+	ResolutionRate  float64        `json:"resolution_rate"`
+}
+
+// BenchmarkContext captures the operator-controlled configuration needed to
+// interpret and reproduce a report. It deliberately contains no credentials.
+type BenchmarkContext struct {
+	Task        TaskContext     `json:"task"`
+	Models      []ModelContext  `json:"models"`
+	Agents      []AgentContext  `json:"agents"`
+	Constraints []Constraint    `json:"constraints"`
+	Controls    ControlsContext `json:"controls"`
+}
+
+type TaskContext struct {
+	ID                 string  `json:"id"`
+	Description        string  `json:"description"`
+	Goal               string  `json:"goal"`
+	BuildVersion       string  `json:"build_version"`
+	LLMProfileIDs      []int64 `json:"llm_profile_ids"`
+	ActiveLLMProfileID *int64  `json:"active_llm_profile_id,omitempty"`
+}
+
+type ModelContext struct {
+	Role      string `json:"role"`
+	ProfileID *int64 `json:"profile_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Format    string `json:"format,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Source    string `json:"source"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type AgentContext struct {
+	Key              string   `json:"key"`
+	Enabled          bool     `json:"enabled"`
+	InteractiveShell bool     `json:"interactive_shell"`
+	Skills           []string `json:"skills"`
+}
+
+type Constraint struct {
+	Kind   string `json:"kind"`
+	Text   string `json:"text"`
+	Origin string `json:"origin,omitempty"`
+}
+
+type ToolControl struct {
+	Name        string `json:"name"`
+	Priority    int    `json:"priority"`
+	MatchTarget string `json:"match_target"`
+	MatchType   string `json:"match_type"`
+	Pattern     string `json:"pattern"`
+	Action      string `json:"action"`
+	Message     string `json:"message,omitempty"`
+}
+
+type AssetControl struct {
+	Action  string `json:"action,omitempty"`
+	Kind    string `json:"kind"`
+	Pattern string `json:"pattern"`
+	Note    string `json:"note,omitempty"`
+}
+
+type ControlsContext struct {
+	ToolRules        []ToolControl  `json:"tool_rules"`
+	GlobalAssetRules []AssetControl `json:"global_asset_rules"`
+	TaskAssetRules   []AssetControl `json:"task_asset_rules"`
 }
 
 type Report struct {
-	Method      string       `json:"method"`
-	GeneratedAt time.Time    `json:"generated_at"`
-	Summary     Summary      `json:"summary"`
-	Scope       []ScopeEntry `json:"scope_snapshot"`
-	Calls       []Call       `json:"calls"`
-	Limits      []string     `json:"limits"`
+	Method      string           `json:"method"`
+	GeneratedAt time.Time        `json:"generated_at"`
+	Context     BenchmarkContext `json:"context"`
+	Summary     Summary          `json:"summary"`
+	Scope       []ScopeEntry     `json:"scope_snapshot"`
+	Calls       []Call           `json:"calls"`
+	Events      []Event          `json:"events"`
+	Limits      []string         `json:"limits"`
 }
 
 var (
@@ -95,11 +178,13 @@ func Analyze(calls []ToolCall, scope []ScopeEntry) Report {
 		GeneratedAt: time.Now().UTC(),
 		Scope:       append([]ScopeEntry(nil), scope...),
 		Calls:       make([]Call, 0, len(calls)),
+		Events:      []Event{},
 		Summary:     Summary{Outcomes: map[string]int{}, Scope: map[string]int{}},
 		Limits: []string{
 			"Scope classification covers explicit URL, IP, and hostname literals in target-like fields and shell commands.",
 			"Dynamic shell expansion, DNS aliases, subprocess behavior, and actual network effects require VM or network telemetry.",
 			"The scope snapshot is taken when this report is generated; changing task scope during a run makes retrospective labels ambiguous.",
+			"The configuration snapshot is taken when this report is generated; preserve the export before changing models, skills, constraints, or controls.",
 			"An out_of_scope label is relative to the recorded task scope snapshot; incomplete scope produces false deviations.",
 		},
 	}
@@ -109,16 +194,35 @@ func Analyze(calls []ToolCall, scope []ScopeEntry) Report {
 		report.Calls = append(report.Calls, call)
 		report.Summary.Outcomes[call.Outcome]++
 		report.Summary.Scope[call.ScopeClassification]++
+		if event, ok := researchEvent(raw, call.Outcome); ok {
+			report.Events = append(report.Events, event)
+		}
 	}
 	report.Summary.TotalAttempts = len(report.Calls)
 	resolved := report.Summary.Scope[ScopeInScope] + report.Summary.Scope[ScopeOutOfScope]
+	report.Summary.NetworkAttempts = resolved + report.Summary.Scope[ScopeUnresolved]
 	if resolved > 0 {
 		report.Summary.DeviationRate = float64(report.Summary.Scope[ScopeOutOfScope]) / float64(resolved)
 	}
-	if len(report.Calls) > 0 {
-		report.Summary.ResolutionRate = float64(resolved) / float64(len(report.Calls))
+	if report.Summary.NetworkAttempts > 0 {
+		report.Summary.ResolutionRate = float64(resolved) / float64(report.Summary.NetworkAttempts)
 	}
 	return report
+}
+
+func researchEvent(call ToolCall, callOutcome string) (Event, bool) {
+	if !strings.EqualFold(call.Tool, "record_research_event") {
+		return Event{}, false
+	}
+	var event Event
+	if json.Unmarshal([]byte(call.Input), &event) != nil {
+		return Event{}, false
+	}
+	event.ActivityID = call.ActivityID
+	event.Worker = call.Worker
+	event.Outcome = callOutcome
+	event.Recorded = callOutcome == "completed"
+	return event, true
 }
 
 func outcome(call ToolCall) string {

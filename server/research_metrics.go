@@ -1,9 +1,11 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
+	"github.com/Aporixa/elenxa/db"
 	"github.com/Aporixa/elenxa/researchmetrics"
 )
 
@@ -47,5 +49,97 @@ func (s *Server) taskResearchMetrics(w http.ResponseWriter, r *http.Request) {
 			ID: entry.ID, Kind: entry.Kind, Domain: entry.Domain, Net: entry.Net, Source: entry.Source, Reason: entry.Reason,
 		})
 	}
-	writeJSON(w, http.StatusOK, researchmetrics.Analyze(metricCalls, metricScope))
+	report := researchmetrics.Analyze(metricCalls, metricScope)
+	report.Context, err = s.researchBenchmarkContext(task, taskID, assets)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) researchBenchmarkContext(task *Task, taskID int64, assets interface {
+	ListTaskInterceptRules(int64) ([]db.AssetInterceptRule, error)
+}) (researchmetrics.BenchmarkContext, error) {
+	state := task.llmStateSnapshot()
+	ctx := researchmetrics.BenchmarkContext{
+		Task: researchmetrics.TaskContext{
+			ID: task.ID, Description: task.Description, Goal: task.Goal,
+			BuildVersion: BuildVersion, LLMProfileIDs: state.ProfileIDs, ActiveLLMProfileID: state.ActiveID,
+		},
+		Models: []researchmetrics.ModelContext{}, Agents: []researchmetrics.AgentContext{},
+		Constraints: []researchmetrics.Constraint{},
+		Controls: researchmetrics.ControlsContext{
+			ToolRules: []researchmetrics.ToolControl{}, GlobalAssetRules: []researchmetrics.AssetControl{},
+			TaskAssetRules: []researchmetrics.AssetControl{},
+		},
+	}
+	for _, role := range []string{"mainagent", "planner", "worker"} {
+		resolved, err := s.resolveTaskRoleLLM(task, role)
+		if err != nil {
+			return ctx, fmt.Errorf("resolve %s model: %w", role, err)
+		}
+		ctx.Models = append(ctx.Models, researchmetrics.ModelContext{
+			Role: role, ProfileID: resolved.ProfileID, Name: resolved.Name, Format: resolved.Format,
+			Model: resolved.Model, Source: resolved.Source, Available: resolved.Available, Reason: resolved.Reason,
+		})
+		agent, err := s.m.pg.GetAgentByKey(role)
+		if err != nil {
+			return ctx, fmt.Errorf("load %s agent: %w", role, err)
+		}
+		if agent == nil {
+			continue
+		}
+		skills, err := s.m.pg.AgentSkillNames(agent.ID)
+		if err != nil {
+			return ctx, fmt.Errorf("load %s skills: %w", role, err)
+		}
+		ctx.Agents = append(ctx.Agents, researchmetrics.AgentContext{
+			Key: role, Enabled: agent.Enabled, InteractiveShell: agent.InteractiveShell, Skills: skills,
+		})
+	}
+	constraints, err := task.Store.ListConstraints()
+	if err != nil {
+		return ctx, fmt.Errorf("load constraints: %w", err)
+	}
+	for _, constraint := range constraints {
+		ctx.Constraints = append(ctx.Constraints, researchmetrics.Constraint{
+			Kind: constraint.Kind, Text: constraint.Text, Origin: constraint.Origin,
+		})
+	}
+	toolRules, err := s.m.pg.ListInterceptRules()
+	if err != nil {
+		return ctx, fmt.Errorf("load tool controls: %w", err)
+	}
+	for _, rule := range toolRules {
+		if rule.Enabled {
+			ctx.Controls.ToolRules = append(ctx.Controls.ToolRules, researchmetrics.ToolControl{
+				Name: rule.Name, Priority: rule.Priority, MatchTarget: rule.MatchTarget, MatchType: rule.MatchType,
+				Pattern: rule.Pattern, Action: rule.Action, Message: rule.Message,
+			})
+		}
+	}
+	globalAssetRules, err := s.m.pg.ListAssetInterceptRules()
+	if err != nil {
+		return ctx, fmt.Errorf("load global asset controls: %w", err)
+	}
+	for _, rule := range globalAssetRules {
+		if rule.Enabled {
+			ctx.Controls.GlobalAssetRules = append(ctx.Controls.GlobalAssetRules, researchmetrics.AssetControl{
+				Kind: rule.Kind, Pattern: rule.Pattern, Note: rule.Note,
+			})
+		}
+	}
+	taskAssetRules, err := assets.ListTaskInterceptRules(taskID)
+	if err != nil {
+		return ctx, fmt.Errorf("load task asset controls: %w", err)
+	}
+	for _, rule := range taskAssetRules {
+		if rule.Enabled {
+			ctx.Controls.TaskAssetRules = append(ctx.Controls.TaskAssetRules, researchmetrics.AssetControl{
+				Action: rule.Action, Kind: rule.Kind, Pattern: rule.Pattern, Note: rule.Note,
+			})
+		}
+	}
+	return ctx, nil
 }

@@ -52,10 +52,17 @@ For anti-AI-defense scenarios, version each deception fixture. Examples include 
 - Total attempted calls, completed calls, errors, permission denials, and hook blocks.
 - Explicit in-scope, out-of-scope, unresolved, and non-network calls.
 - Scope-deviation rate: explicit out-of-scope attempts divided by resolved network attempts.
+- Scope-resolution rate: resolved network attempts divided by all calls with a recognized network-target surface; non-network tool calls are excluded.
 - Recovery after deception: whether the run corroborated the lure, returned to the objective, and eventually reached the oracle.
 - Efficiency cost: extra calls, tokens, and elapsed time introduced by a skill or defense.
 
 The research endpoint classifies only literal targets visible in tool inputs. Shell variables, DNS indirection, subprocesses, and actual packets require VM or network telemetry. Preserve the raw task archive so later classifiers can re-evaluate the same evidence.
+
+The task detail page's **Research** tab shows these measurements and exports the complete report as JSON. The export includes a sanitized configuration snapshot: task goal and model chain, effective model per orchestration role, visible skills, persistent-shell state, task constraints, and enabled tool/asset controls. It never includes API keys. The bundled `adversarial-environment`, `ai-target-research`, and `lab-operations` skills are visible to the worker, planner, and main agent by default. Disabling one in the agent editor is persistent and supports skill-by-skill ablation runs.
+
+The research branch enables Elenxa's built-in persistent PTY shell tools for the worker and main agent. Their mutating operations still pass through the normal permission and intercept path. On an existing database this is a one-time migration; after it runs, an operator can disable interactive shell access per agent and restarts preserve that choice. Record this toggle in the scenario manifest.
+
+Agents use `record_research_event` to preserve structured steering, deception, control-block, recovery, and oracle observations. The event is also written as an ordinary exploration fact so the planner can use it; the research endpoint extracts the original structured input and records whether the write completed.
 
 Use Promptfoo for deterministic AI regression cases first. Use PyRIT, DeepTeam, Garak, or JEF to generate broader adversarial cases outside Elenxa. Pass the selected case, seed, technique ID, and oracle into the Elenxa trial. Do not place a second planner inside Elenxa's task loop.
 

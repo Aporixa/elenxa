@@ -49,3 +49,5 @@ Change one important variable at a time when comparing variants. Keep exact prom
 ## Result quality
 
 A target response is not success unless the task's oracle accepts it or an independently observable side effect proves it. Report attempts, successful trials, failures, resets, token or time cost when available, and remaining uncertainty.
+
+Call `record_research_event` with `event_type=oracle_check` for each decisive verifier result. Record target steering or deceptive output through the adversarial-environment protocol.

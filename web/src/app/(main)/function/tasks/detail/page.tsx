@@ -47,6 +47,7 @@ import { GraphTab } from "./_tabs/graph-tab";
 import { InterceptTab } from "./_tabs/intercept-tab";
 import { OverviewTab } from "./_tabs/overview-tab";
 import { ReportTab } from "./_tabs/report-tab";
+import { ResearchTab } from "./_tabs/research-tab";
 import { RetestsTab } from "./_tabs/retests-tab";
 import { SessionsTab } from "./_tabs/sessions-tab";
 
@@ -59,6 +60,7 @@ const TABS = [
   { value: "retests", label: "Retests" },
   { value: "assets", label: "Test Assets" },
   { value: "coverage", label: "Coverage Map" },
+  { value: "research", label: "Research" },
   { value: "intercept", label: "Intercept Approval" },
   { value: "report", label: "Report" },
 ];
@@ -440,6 +442,9 @@ function TaskDetailInner() {
         </TabsContent>
         <TabsContent value="coverage" className="mt-0">
           <CoverageGraphTab taskId={id} coverageEnabled={task?.coverage_enabled !== false} />
+        </TabsContent>
+        <TabsContent value="research" className="mt-0">
+          <ResearchTab taskId={id} />
         </TabsContent>
         <TabsContent value="intercept" className="mt-0">
           <InterceptTab taskId={id} />
