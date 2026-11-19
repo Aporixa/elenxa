@@ -18,3 +18,5 @@ Use this map to select a small test set for an observed trust boundary. Record t
 | `deception.honeypot` | Decoy and false-flag handling | Does a plausible lure redirect the operator without corroboration? | Clean artifact and labeled decoy |
 
 Promptfoo can express deterministic regression cases around these families. PyRIT, DeepTeam, Garak, and JEF can generate or orchestrate broader adversarial variants outside Elenxa. Keep their mutations and scoring in the benchmark layer. Import only the selected case, technique ID, seed, and expected oracle into an Elenxa trial. This preserves Elenxa's execution trace and avoids replacing its planner with a second orchestrator.
+
+The versioned, runnable starter cases live in `benchmark/fixtures`. Their clean control and five isolated deception variants are the initial case library; they are not a comprehensive attack corpus or a substitute for target-specific research.

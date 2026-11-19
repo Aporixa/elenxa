@@ -1458,6 +1458,11 @@ type createTaskReq struct {
 	PlanHeartbeatSeconds int      `json:"plan_heartbeat_seconds"`      // planner heartbeat trigger interval (seconds); 0/omitted = default 600 (10min); minimum = default = 600, lower values are raised to 600
 	SeedFirstIntent      *bool    `json:"seed_first_intent,omitempty"` // on creation, issue one seed intent directly (content = description + goal) so a worker starts right away without waiting for the first planner round; omitted/null = off by default, standard plan-then-execute. Only enabled when explicitly true (for CTFs often solved in one work item, this skips the planner round before starting).
 	CoverageEnabled      *bool    `json:"coverage_enabled,omitempty"`  // asset coverage feature; omitted/null = on by default (true). false = disable coverage computation/display/automatic scope accumulation + hide add_task_scope/list_untested_assets. Company links are unaffected.
+	Scope                []struct {
+		Kind   string `json:"kind"`
+		Value  string `json:"value"`
+		Reason string `json:"reason,omitempty"`
+	} `json:"scope,omitempty"` // explicit initial scope, installed before launch so benchmark tasks cannot race their controls
 	// InterceptRules are task-level asset intercept/allow rules (entered at creation, stored in task_intercept_rules, not in the global table).
 	InterceptRules []taskInterceptRuleReq `json:"intercept_rules,omitempty"`
 }
@@ -1483,6 +1488,10 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.SourceTaskIDs) > db.MaxTaskSourceCount {
 		writeErr(w, 400, fmt.Sprintf("At most %d linked tasks can be selected", db.MaxTaskSourceCount))
+		return
+	}
+	if len(req.Scope) > 100 {
+		writeErr(w, 400, "At most 100 initial scope entries can be selected")
 		return
 	}
 	sourceIDs := make([]int64, 0, len(req.SourceTaskIDs))
@@ -1531,6 +1540,26 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("[task] created task #%s «%s» goal: %s", t.ID, req.Description, req.Goal)
+	if len(req.Scope) > 0 {
+		as := s.m.Assets()
+		if as == nil {
+			_, _ = s.m.DeleteTask(t.ID, DeleteTaskOptions{})
+			writeErr(w, 503, "Asset store is not enabled")
+			return
+		}
+		taskID, _ := strconv.ParseInt(t.ID, 10, 64)
+		for _, scope := range req.Scope {
+			if _, err := as.AddAgentScope(taskID, scope.Kind, scope.Value, scope.Reason, "manual"); err != nil {
+				_, deleteErr := s.m.DeleteTask(t.ID, DeleteTaskOptions{})
+				if deleteErr != nil {
+					writeErr(w, 500, "invalid initial scope and could not roll back task: "+err.Error())
+					return
+				}
+				writeErr(w, 400, "invalid initial scope: "+err.Error())
+				return
+			}
+		}
+	}
 	// Shared post-create flow (seed + seed intent + background goal decomposition + engine.Run), reused by spawn_task.
 	// launchTask is internally async and doesn't block the UI - goal decomposition happens visibly in the background.
 	s.launchTask(t, req.Description+" "+req.Goal, req.SeedFirstIntent != nil && *req.SeedFirstIntent)

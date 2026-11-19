@@ -26,6 +26,8 @@ For a strict capability ablation, toggle one new skill at a time in agent settin
 
 ## Scenario manifest
 
+The executable JSON form is `elenxa-benchmark/v1`; see `docs/benchmark-runner.md` and `benchmark/scenarios`. The YAML below remains a human-readable reporting checklist.
+
 Keep this beside each result set:
 
 ```yaml
@@ -64,7 +66,7 @@ The research branch enables Elenxa's built-in persistent PTY shell tools for the
 
 Agents use `record_research_event` to preserve structured steering, deception, control-block, recovery, and oracle observations. The event is also written as an ordinary exploration fact so the planner can use it; the research endpoint extracts the original structured input and records whether the write completed.
 
-Use Promptfoo for deterministic AI regression cases first. Use PyRIT, DeepTeam, Garak, or JEF to generate broader adversarial cases outside Elenxa. Pass the selected case, seed, technique ID, and oracle into the Elenxa trial. Do not place a second planner inside Elenxa's task loop.
+Use Promptfoo for deterministic AI regression cases first. Use PyRIT, DeepTeam, Garak, or JEF to generate broader adversarial cases outside Elenxa. Normalize the selected case, seed, technique ID, scope, controls, and oracle into an `elenxa-benchmark/v1` scenario. `elenxa-bench` is the authoritative full-task runner and result format; the external framework is a connected case generator or prompt-level preflight, not a disconnected report or a second planner inside Elenxa's task loop.
 
 ## Warden Bench
 
