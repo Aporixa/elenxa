@@ -2,11 +2,14 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
 	"runtime/debug"
+	"sync"
 
+	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -61,10 +64,66 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 		out = ToolResolve(ctx, agentKey, out)
 	}
 	out, def.FindingGuidance = findingWorkflowTools(agentKey, out)
+	duplicates := &duplicateCallGuard{}
 	for i, t := range out {
-		out[i] = guardPanic(t)
+		out[i] = guardDuplicateCalls(guardPanic(t), duplicates)
 	}
 	return out, def, cleanup
+}
+
+// duplicateCallGuard is scoped to one assembled agent run. A different call
+// resets the streak, so intentional verification after gathering new evidence
+// is unaffected; only immediate, identical loops are intercepted.
+type duplicateCallGuard struct {
+	mu          sync.Mutex
+	last        [sha256.Size]byte
+	hasLast     bool
+	consecutive int
+}
+
+func (g *duplicateCallGuard) observe(name string, input json.RawMessage) int {
+	normalized := input
+	var value any
+	if json.Unmarshal(input, &value) == nil {
+		if raw, err := json.Marshal(value); err == nil {
+			normalized = raw
+		}
+	}
+	fingerprint := sha256.Sum256(append(append([]byte(name), 0), normalized...))
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.hasLast && fingerprint == g.last {
+		g.consecutive++
+	} else {
+		g.last = fingerprint
+		g.hasLast = true
+		g.consecutive = 1
+	}
+	return g.consecutive
+}
+
+func guardDuplicateCalls(t actool.CoreTool, guard *duplicateCallGuard) actool.CoreTool {
+	return &duplicateGuardedTool{CoreTool: t, guard: guard}
+}
+
+type duplicateGuardedTool struct {
+	actool.CoreTool
+	guard *duplicateCallGuard
+}
+
+func (d *duplicateGuardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
+	if d.guard == nil {
+		return d.CoreTool.Call(ctx, in, tc)
+	}
+	consecutive := d.guard.observe(d.Name(), in)
+	if consecutive >= 3 {
+		return actool.Errorf("duplicate-call prevention: blocked a third consecutive identical " + d.Name() + " call; the prior retry produced no changed plan. Check the control path and existing evidence, then change the tool or arguments before retrying"), nil
+	}
+	result, err := d.CoreTool.Call(ctx, in, tc)
+	if consecutive == 2 {
+		result.Content = append(result.Content, llm.TextBlock("[Duplicate-call warning] This was the second consecutive identical call. Do not issue it again unchanged; check the control path, use the existing result, or change the hypothesis/arguments."))
+	}
+	return result, err
 }
 
 // guardPanic turns a panicking tool handler into an ordinary tool error. The

@@ -70,6 +70,7 @@ import type {
   NotificationMeta,
   PromptVar,
   PromptVersion,
+  ResearchMetricsReport,
   SessionTokenUsage,
   Settings,
   Severity,
@@ -421,6 +422,7 @@ export const api = {
 
   // This task's test scope list (including scope inherited from the source task).
   taskScope: (id: string) => get<{ scope: TaskScopeRow[] }>(`/tasks/${id}/scope`),
+  researchMetrics: (id: string) => get<ResearchMetricsReport>(`/tasks/${id}/research-metrics`),
   // Manually add a test scope entry (kind=company/root_domain/subdomain/ip/cidr).
   addTaskScope: (id: string, kind: string, value: string, reason?: string) =>
     post<TaskScopeRow>(`/tasks/${id}/scope`, { kind, value, reason }),

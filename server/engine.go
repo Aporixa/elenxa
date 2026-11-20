@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -178,6 +179,47 @@ func (e *Engine) nextPlannerRound(taskID string) int {
 func (e *Engine) Pause(taskID string, cause error) {
 	e.paused.Store(taskID, true)
 	e.cancelExec(taskID, cause)
+}
+
+// AbortModelRefused is the pause cause when the provider declines a planner run.
+var AbortModelRefused = agent.Causef("model_refused", "Model provider declined the request",
+	"The model provider returned stop_reason=refusal: a platform safety/usage-policy control declined the request. This is deterministic for the same request, so the task was paused instead of re-planning (each retry costs a full planner round). Review the task text / provider access level, then resume")
+
+// pauseOnRefusal persists a pause after a provider refusal so heartbeat/edge wakes
+// do not keep re-sending a request the platform will decline again. It also emits a
+// visible activity row that records the event as a platform-control block.
+func (e *Engine) pauseOnRefusal(t *Task, where string) error {
+	log.Printf("[%s] task %s declined by the model provider (stop_reason=refusal; platform-control block): pausing task", where, t.ID)
+	e.Pause(t.ID, AbortModelRefused)
+	if e.m != nil {
+		if err := e.m.ApplyTaskPause(t.ID); err != nil {
+			log.Printf("[%s] task %s failed to persist refusal pause: %v", where, t.ID, err)
+			e.Resume(t)
+			e.emitActivity(t, db.Activity{Worker: where, Kind: "text", IsError: true,
+				Summary: "Model provider declined the request, but the automatic pause could not be persisted",
+				Detail:  "Platform-control block: the provider declined this request. Elenxa did not record the task as paused because persistence failed; retry remains possible. Error: " + err.Error()})
+			e.emitActivity(t, db.Activity{Worker: where, Kind: "control", IsError: true,
+				Summary:  "Provider refusal; automatic pause persistence failed",
+				Metadata: controlEventMetadata("platform_refusal", "Provider refused the request", where, "blocked", "pause persistence failed")})
+			return err
+		}
+	}
+	e.emitActivity(t, db.Activity{Worker: where, Kind: "text", IsError: true,
+		Summary: "Model provider declined the request (stop_reason=refusal); task paused",
+		Detail:  "Platform-control block: the provider's safety/usage-policy control declined this " + where + " request. Retrying the same request will not change the outcome, so the task was paused to avoid burning tokens. Check the task text and the provider access level for this API key's organization, then resume."})
+	e.emitActivity(t, db.Activity{Worker: where, Kind: "control", IsError: true,
+		Summary:  "Provider refusal paused the task",
+		Metadata: controlEventMetadata("platform_refusal", "Provider refused the request", where, "blocked", "task paused without retry")})
+	return nil
+}
+
+func controlEventMetadata(eventType, summary, artifact, impact, recovery string) json.RawMessage {
+	raw, _ := json.Marshal(map[string]any{
+		"event_type": eventType, "summary": summary, "artifact": artifact,
+		"corroboration": "provider terminal reason normalized as refusal", "changed_plan": true,
+		"impact": impact, "recovery": recovery,
+	})
+	return raw
 }
 
 // BeginDelete installs an execution barrier before task data/files are removed.
@@ -880,6 +922,10 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		met, reason, err := planner.Plan(ectx, taskIDInt, e.m.assets, t.Store, t.Goal, triggers, emit)
 		e.EndLLMCall(t.ID)
 		switch {
+		case errors.Is(err, agent.ErrModelRefused):
+			if pauseErr := e.pauseOnRefusal(t, "planner"); pauseErr != nil {
+				log.Printf("[planner] task %s refusal pause failed: %v", t.ID, pauseErr)
+			}
 		case err != nil && ectx.Err() == nil:
 			log.Printf("[planner] task %s planning error: %v", t.ID, err)
 		case met:
@@ -1142,9 +1188,21 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	case reason == harness.ReasonTimeout:
 		state = "exhausted"
 		log.Printf("[worker %s] intent %d run timed out (exhausted), wrote back %s after wrap-up", name, intent.ID, wrote)
+	case reason == harness.ReasonRefused:
+		state = "blocked"
+		log.Printf("[worker %s] task %s intent #%d declined by the model provider (stop_reason=refusal; platform-control block), wrote back %s", name, t.ID, intent.ID, wrote)
+		e.emitActivity(t, db.Activity{NodeID: &intent.ID, Worker: name, Kind: "control", IsError: true,
+			Summary:  "Provider refusal blocked the intent",
+			Metadata: controlEventMetadata("platform_refusal", "Provider refused the worker request", fmt.Sprintf("intent:%d", intent.ID), "blocked", "intent blocked without retry")})
 	}
 	if state == "blocked" && isTaskLLMChainExhausted(err) {
-		_ = t.Store.SetIntentBlockedReason(intent.ID, db.IntentBlockedLLMQuota)
+		if stateErr := t.Store.SetIntentBlockedReason(intent.ID, db.IntentBlockedLLMQuota); stateErr != nil {
+			log.Printf("[worker %s] task %s intent #%d failed to persist LLM-quota block: %v", name, t.ID, intent.ID, stateErr)
+		}
+	} else if reason == harness.ReasonRefused {
+		if stateErr := t.Store.SetIntentBlockedReason(intent.ID, db.IntentBlockedModelRefused); stateErr != nil {
+			log.Printf("[worker %s] task %s intent #%d failed to persist model-refusal block: %v", name, t.ID, intent.ID, stateErr)
+		}
 	} else {
 		if stateErr := transitionIntentState(t.Store, intent.ID, "running", state); stateErr != nil {
 			log.Printf("[worker %s] task %s intent #%d failed to persist terminal state %s: %v", name, t.ID, intent.ID, state, stateErr)

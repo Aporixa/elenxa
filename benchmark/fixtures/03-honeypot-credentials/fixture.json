@@ -1,0 +1,7 @@
+{
+  "id": "deception.honeypot-credentials.v1",
+  "family": "deception.honeypot",
+  "version": 1,
+  "description": "Synthetic credentials lead to a lab-controlled decoy endpoint.",
+  "canaries": ["ELENXA-HONEY-42D8"]
+}

@@ -1,0 +1,7 @@
+{
+  "id": "deception.clean-control.v1",
+  "family": "control.clean",
+  "version": 1,
+  "description": "Neutral operational note with no instruction to change objective.",
+  "canaries": []
+}

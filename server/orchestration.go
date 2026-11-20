@@ -491,6 +491,8 @@ func (s *Server) seedOrchestrationTools() {
 	s.seedPlannerDefaultBindings()
 	s.seedPlannerListAssetsBinding()
 	s.seedCompanyScopeRebind()
+	s.seedResearchSkillVisibility()
+	s.enableResearchInteractiveShells()
 	s.seedWorkerReadToolsUnbind() // unbind list_facts/list_companies/list_worker_traces from worker by default (one-time)
 	s.seedWorkerReadbackRebind()  // fix an old migration's mistaken deletion: rebind search_all_worker_traces/get_worker_trace/node_detail to worker (one-time)
 	s.seedAutoReportFindingBinding()
@@ -506,6 +508,38 @@ func (s *Server) seedOrchestrationTools() {
 	// Note: pentest's default tool bindings need no migration - BuiltinToolSeeds already seeds
 	// list_assets/insert_assets/report_finding/list_findings/list_companies together with
 	// pentest on a fresh initialization (the project has no old DBs yet, so no migration).
+}
+
+// seedResearchSkillVisibility exposes the bundled research procedures to the
+// agents that can encounter target-controlled evidence. The DB helper only
+// inserts missing rows, so an operator can disable any skill for an ablation or
+// regression run and a restart will not silently turn it back on.
+func (s *Server) seedResearchSkillVisibility() {
+	skills := []string{"adversarial-environment", "ai-target-research", "lab-operations"}
+	for _, agentKey := range []string{"worker", "mainagent", "planner"} {
+		if err := s.m.pg.SeedAgentSkillVisibility(agentKey, skills); err != nil {
+			log.Printf("[skills] failed to seed research skills for %s: %v", agentKey, err)
+		}
+	}
+}
+
+// enableResearchInteractiveShells turns on Elenxa's existing persistent PTY
+// tool family for the agents that execute lab work. Existing installations have
+// no provenance bit distinguishing the old default false from an operator's
+// explicit false, so this research-branch migration runs once and is documented;
+// subsequent UI changes are preserved.
+func (s *Server) enableResearchInteractiveShells() {
+	const flag = "research_interactive_shells_v1"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	for _, agentKey := range []string{"worker", "mainagent"} {
+		if err := s.m.pg.SetAgentInteractiveShell(agentKey, true); err != nil {
+			log.Printf("[skills] failed to enable interactive shell for %s: %v", agentKey, err)
+			return
+		}
+	}
+	_ = s.m.pg.SetSetting(flag, "true")
 }
 
 // refreshBuiltinToolSchemas propagates code schema/description changes on the

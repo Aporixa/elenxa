@@ -189,9 +189,9 @@ type promptVar struct{ name, desc, example, source string }
 func intp(v int) *int { return &v }
 
 // builtinAgents mirrors docs §5(a). Built-in tools are not stored in the database; only agents + the variable catalog are seeded here.
-// Interactive shell (persistent PTY tool family) ships OFF for every built-in agent;
-// the user enables it per agent when needed. interactiveShell is only the value used
-// when the row is first created — ON CONFLICT never overrides a later user toggle.
+// Interactive shell (persistent PTY tool family) ships on for the worker and main
+// agent in this research branch. interactiveShell is only the value used when the
+// row is first created — ON CONFLICT never overrides a later user toggle.
 var builtinAgents = []builtinAgent{
 	{"goals", "Goal breakdown", "goals", "Break the pentest task goal down into several independent, verifiable sub-goals.", []promptVar{
 		{"EngagementDescription", "Task description (test target/background)", "Test the example.com site", "exploration"},
@@ -206,11 +206,11 @@ var builtinAgents = []builtinAgent{
 		{"Goal", "Current task goal", "Gain admin access to example.com", "exploration"},
 		{"AssetSummary", "Opening situation summary (optional)", "domain:3 ip:5", "distilled"},
 		{"FindingsSummary", "Confirmed vulnerability summary (optional)", "high:1 medium:2", "distilled"},
-	}, false, nil},
+	}, true, nil},
 	{"worker", "Execution", "worker", "Claims one intent, executes it, writes discovered facts/vulnerabilities back to the knowledge graph, then stops.", []promptVar{
 		{"ProxyAddr", "Recording proxy address (drives the if two-variant text)", "127.0.0.1:8080", "runtime"},
 		{"WorkerName", "Worker self-identifier (optional)", "worker-1", "runtime"},
-	}, false, nil},
+	}, true, nil},
 	// Auto: the built-in "platform operations" agent. It does not take part in the pentest orchestration loop; driven from the chat page, it uses tools to operate the platform.
 	{"auto", "Auto", "assistant", "Platform operations assistant: uses tools to manage tasks (create/view/pause/give hints) and assets, and can create/modify skills, custom tools and MCP.", nil, false, nil},
 	// Pentest: the built-in "standalone pentest" agent. Driven from the chat page, a single agent walks the whole pentest chain from recon to wrap-up, planning, executing and verifying on its own. Interactive shell is off by default (enable per agent).
@@ -247,9 +247,9 @@ ON CONFLICT (agent_id, var_name) DO UPDATE
 	if _, err := d.Exec(`DELETE FROM agent_prompt_vars WHERE var_name IN ('EngagementTitle', 'CoverageGaps', 'Now')`); err != nil {
 		return fmt.Errorf("cleanup renamed vars: %w", err)
 	}
-	// Interactive shell is no longer force-enabled for the runtime agents: new
-	// installs keep the per-agent seed value (false). Existing rows are left as-is so
-	// a user's explicit choice is never flipped.
+	// Existing rows keep their current value here; the research-branch one-time
+	// migration in server enables the worker/main agent without repeatedly
+	// overriding later operator changes.
 	//
 	// Seed the built-in browser MCP once — DISABLED by default, no proxy by default.
 	// It is the bundled stdio binary /app/elenxa-browser-mcp (no npx / network fetch).
@@ -324,7 +324,10 @@ ON CONFLICT DO NOTHING`, r.kind, r.pattern, r.note); err != nil {
 // binding. Skills omitted here (e.g. playwright-cli) ship invisible by default —
 // the user turns them on per-agent when needed.
 var builtinSkillVisibility = map[string][]string{
-	"api-recon": {"auto", "pentest", "worker"},
+	"api-recon":               {"auto", "pentest", "worker"},
+	"adversarial-environment": {"auto", "pentest", "worker"},
+	"ai-target-research":      {"auto", "pentest", "worker"},
+	"lab-operations":          {"auto", "pentest", "worker"},
 }
 
 // seedBuiltinSkillVisibility binds the shipped built-in skills to their default

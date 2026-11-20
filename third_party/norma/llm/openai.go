@@ -50,14 +50,14 @@ type oaReq struct {
 	// MaxTokens and MaxCompletionTokens are mutually exclusive: buildBody fills
 	// exactly one of them per Config.MaxTokensField, and omitempty drops the
 	// other. Sending both would make OpenAI reject the request.
-	MaxTokens           int      `json:"max_tokens,omitempty"`
-	MaxCompletionTokens int      `json:"max_completion_tokens,omitempty"`
-	Temperature         *float64 `json:"temperature,omitempty"`
-	Stop            []string      `json:"stop,omitempty"`
-	Thinking        *oaThinking   `json:"thinking,omitempty"`
-	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
-	Stream          bool          `json:"stream"`
-	StreamOptions   *oaStreamOpts `json:"stream_options,omitempty"`
+	MaxTokens           int           `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int           `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64      `json:"temperature,omitempty"`
+	Stop                []string      `json:"stop,omitempty"`
+	Thinking            *oaThinking   `json:"thinking,omitempty"`
+	ReasoningEffort     string        `json:"reasoning_effort,omitempty"`
+	Stream              bool          `json:"stream"`
+	StreamOptions       *oaStreamOpts `json:"stream_options,omitempty"`
 }
 
 type oaStreamOpts struct {
@@ -330,7 +330,11 @@ func (p *openaiProvider) Stream(ctx context.Context, req CompletionRequest) iter
 				}
 				evs, sr, u, ok := parseOpenAIFrame(data, started)
 				if sr != "" {
-					stopReason = sr
+					// A later finish_reason:"stop" frame must not erase an earlier
+					// refusal delta from the same streamed turn.
+					if stopReason != "refusal" || sr == "refusal" {
+						stopReason = sr
+					}
 				}
 				if ok {
 					usage = u
@@ -479,7 +483,11 @@ func parseOpenAIResponse(raw []byte) (Message, string, Usage, error) {
 		}
 		blocks = append(blocks, ContentBlock{Type: BlockToolUse, ID: tc.ID, Name: tc.Function.Name, Input: []byte(in)})
 	}
-	return Message{Role: RoleAssistant, Content: blocks}, mapOpenAIFinish(ch.FinishReason), usage, nil
+	stop := mapOpenAIFinish(ch.FinishReason)
+	if ch.Message.Refusal != "" {
+		stop = "refusal"
+	}
+	return Message{Role: RoleAssistant, Content: blocks}, stop, usage, nil
 }
 
 func truncate(s string, max int) string {
@@ -548,6 +556,7 @@ func parseOpenAIFrame(data string, started map[int]bool) (evs []StreamEvent, sto
 	if ch.Delta.Refusal != "" {
 		// See parseOpenAIResponse: a refusal streams in `refusal`, not `content`.
 		evs = append(evs, StreamEvent{Type: SETextDelta, Text: ch.Delta.Refusal})
+		stopReason = "refusal"
 	}
 	for _, tc := range ch.Delta.ToolCalls {
 		if !started[tc.Index] && (tc.ID != "" || tc.Function.Name != "") {
@@ -559,7 +568,10 @@ func parseOpenAIFrame(data string, started map[int]bool) (evs []StreamEvent, sto
 		}
 	}
 	if ch.FinishReason != "" {
-		stopReason = mapOpenAIFinish(ch.FinishReason)
+		mapped := mapOpenAIFinish(ch.FinishReason)
+		if stopReason != "refusal" {
+			stopReason = mapped
+		}
 	}
 	return evs, stopReason, usage, hasUsage
 }

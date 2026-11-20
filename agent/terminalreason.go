@@ -37,6 +37,7 @@ var reasonHint = map[harness.TerminalReason]string{
 	harness.ReasonModelError:        "Model or API call failed (network, auth, rate limiting, provider 5xx, etc.); after retries were exhausted the intent was marked blocked - a transport-layer failure means this intent was essentially never actually probed; check its execution trace (get_worker_trace) before deciding to re-dispatch or change approach",
 	harness.ReasonBlockingLimit:     "Context length hit the hard limit and the request was blocked before being sent; narrow the intent's scope or compress tool output",
 	harness.ReasonPromptTooLong:     "Prompt too long and context-compaction retries are exhausted; cannot continue",
+	harness.ReasonRefused:           "The model provider declined this request (stop_reason=refusal): a platform safety/usage-policy control blocked the turn, not a tool or network failure. Retrying the same request will not change the outcome; the run was stopped without retries. Recorded as a platform-control block",
 	harness.ReasonImageError:        "The current model does not support this turn's multimodal content; switch to a vision-capable model or avoid tools returning images",
 	harness.ReasonStopHookPrevented: "A Stop hook prevented this turn from ending and the run could not continue afterwards; check whether the task's Guard rules are too strict",
 	harness.ReasonHookStopped:       "A tool or hook actively stopped execution, e.g. an out-of-scope target or a forbidden command; check the block explanation in the last tool_result",

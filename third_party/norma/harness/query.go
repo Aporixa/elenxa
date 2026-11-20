@@ -346,6 +346,9 @@ func countBoundaries(msgs []llm.Message) int {
 	return n
 }
 
+// StopReasonRefusal is the provider stop_reason for a safety-classifier refusal.
+const StopReasonRefusal = "refusal"
+
 func (l *loop) finish(reason TerminalReason, err error, text string) {
 	l.yield(Event{Kind: KindResult, Terminal: &Terminal{
 		Reason:   reason,
@@ -451,6 +454,15 @@ func (l *loop) run() {
 			}
 		}
 		toolUses := asst.ToolUses()
+
+		// Provider-side refusal (Anthropic stop_reason "refusal"): a policy decision,
+		// not an empty completion. End the run immediately with a distinct reason —
+		// no stop hooks, keep-working nudges or budget continuations, which would only
+		// re-send the same request and burn tokens on a deterministic outcome.
+		if stopReason == StopReasonRefusal {
+			l.finish(ReasonRefused, nil, asst.Text())
+			return
+		}
 
 		// max_tokens truncation with no tool calls → escalate / resume-recovery.
 		// These continuations are retries of the same turn (they do not advance
