@@ -6,6 +6,8 @@ package benchmark
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/Aporixa/elenxa/researchmetrics"
 )
 
 const SchemaVersion = "elenxa-benchmark/v1"
@@ -14,6 +16,8 @@ type Scenario struct {
 	SchemaVersion string       `json:"schema_version"`
 	ID            string       `json:"id"`
 	Description   string       `json:"description,omitempty"`
+	Provenance    *Provenance  `json:"provenance,omitempty"`
+	Techniques    []Technique  `json:"techniques,omitempty"`
 	Trials        int          `json:"trials,omitempty"`
 	Elenxa        ElenxaSpec   `json:"elenxa"`
 	Task          TaskSpec     `json:"task"`
@@ -22,6 +26,39 @@ type Scenario struct {
 	Oracle        OracleSpec   `json:"oracle"`
 	Egress        []EgressSpec `json:"egress,omitempty"`
 	Expectations  Expectations `json:"expectations,omitempty"`
+}
+
+// Provenance freezes the external case identity without making the external
+// tool part of Elenxa's measured runtime.
+type Provenance struct {
+	Source             string              `json:"source"`
+	SourceReference    string              `json:"source_reference,omitempty"`
+	SourceVersion      string              `json:"source_version,omitempty"`
+	SourceDigest       string              `json:"source_digest"`
+	ExternalSuiteID    string              `json:"external_suite_id,omitempty"`
+	ExternalCaseID     string              `json:"external_case_id"`
+	ExternalCaseDigest string              `json:"external_case_digest"`
+	PromptID           string              `json:"prompt_id,omitempty"`
+	RenderedInput      string              `json:"rendered_input"`
+	Variables          map[string]any      `json:"variables,omitempty"`
+	Context            any                 `json:"context,omitempty"`
+	ExternalAssertions []ExternalAssertion `json:"external_assertions,omitempty"`
+	Unsupported        []string            `json:"unsupported,omitempty"`
+}
+
+type Technique struct {
+	ID       string `json:"id"`
+	Source   string `json:"source,omitempty"`
+	Plugin   string `json:"plugin,omitempty"`
+	Strategy string `json:"strategy,omitempty"`
+	Seed     string `json:"seed,omitempty"`
+}
+
+type ExternalAssertion struct {
+	Type   string          `json:"type,omitempty"`
+	Status string          `json:"status"`
+	Raw    json.RawMessage `json:"raw"`
+	Reason string          `json:"reason,omitempty"`
 }
 
 type ElenxaSpec struct {
@@ -100,20 +137,21 @@ type Expectations struct {
 }
 
 type Result struct {
-	SchemaVersion string          `json:"schema_version"`
-	ScenarioID    string          `json:"scenario_id"`
-	Trial         int             `json:"trial"`
-	StartedAt     time.Time       `json:"started_at"`
-	FinishedAt    time.Time       `json:"finished_at"`
-	TaskID        string          `json:"task_id,omitempty"`
-	TaskStatus    string          `json:"task_status,omitempty"`
-	FixtureID     string          `json:"fixture_id,omitempty"`
-	Metrics       json.RawMessage `json:"metrics,omitempty"`
-	Oracle        OracleResult    `json:"oracle"`
-	Egress        []EgressResult  `json:"egress"`
-	Assertions    []Assertion     `json:"assertions"`
-	Passed        bool            `json:"passed"`
-	Error         string          `json:"error,omitempty"`
+	SchemaVersion string                          `json:"schema_version"`
+	ScenarioID    string                          `json:"scenario_id"`
+	Trial         int                             `json:"trial"`
+	StartedAt     time.Time                       `json:"started_at"`
+	FinishedAt    time.Time                       `json:"finished_at"`
+	TaskID        string                          `json:"task_id,omitempty"`
+	TaskStatus    string                          `json:"task_status,omitempty"`
+	FixtureID     string                          `json:"fixture_id,omitempty"`
+	Metrics       json.RawMessage                 `json:"metrics,omitempty"`
+	Score         *researchmetrics.BenchmarkScore `json:"score,omitempty"`
+	Oracle        OracleResult                    `json:"oracle"`
+	Egress        []EgressResult                  `json:"egress"`
+	Assertions    []Assertion                     `json:"assertions"`
+	Passed        bool                            `json:"passed"`
+	Error         string                          `json:"error,omitempty"`
 }
 
 type OracleResult struct {

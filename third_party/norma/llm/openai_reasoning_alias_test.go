@@ -101,20 +101,26 @@ func TestOpenAIResponseReasoningAlias(t *testing.T) {
 // A refused turn carries content:null and the reason in `refusal`; it must not
 // decode to an empty assistant message.
 func TestOpenAIRefusalBecomesText(t *testing.T) {
-	msg, _, _, err := parseOpenAIResponse([]byte(`{"choices":[{"message":{"content":null,"refusal":"I can't help with that."},"finish_reason":"stop"}]}`))
+	msg, stop, _, err := parseOpenAIResponse([]byte(`{"choices":[{"message":{"content":null,"refusal":"I can't help with that."},"finish_reason":"stop"}]}`))
 	if err != nil {
 		t.Fatalf("parse err: %v", err)
 	}
 	if msg.Text() != "I can't help with that." {
 		t.Fatalf("text=%q", msg.Text())
 	}
+	if stop != "refusal" {
+		t.Fatalf("stop=%q, want refusal", stop)
+	}
 }
 
 func TestOpenAIStreamRefusalBecomesText(t *testing.T) {
 	started := map[int]bool{}
-	evs, _, _, _ := parseOpenAIFrame(`{"choices":[{"index":0,"delta":{"refusal":"I can't"}}]}`, started)
+	evs, stop, _, _ := parseOpenAIFrame(`{"choices":[{"index":0,"delta":{"refusal":"I can't"}}]}`, started)
 	if len(evs) != 1 || evs[0].Type != SETextDelta || evs[0].Text != "I can't" {
 		t.Fatalf("evs=%+v", evs)
+	}
+	if stop != "refusal" {
+		t.Fatalf("stop=%q, want refusal", stop)
 	}
 }
 

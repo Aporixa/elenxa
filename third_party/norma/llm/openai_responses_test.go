@@ -129,6 +129,30 @@ func TestResponsesReasoningTextContent(t *testing.T) {
 	}
 }
 
+func TestResponsesRefusalIsTextAndTerminalReason(t *testing.T) {
+	msg, stop, _, err := parseResponsesResponse([]byte(`{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"I can't help with that."}]}]}`))
+	if err != nil {
+		t.Fatalf("parse err: %v", err)
+	}
+	if msg.Text() != "I can't help with that." {
+		t.Fatalf("text=%q", msg.Text())
+	}
+	if stop != "refusal" {
+		t.Fatalf("stop=%q, want refusal", stop)
+	}
+}
+
+func TestResponsesStreamingRefusal(t *testing.T) {
+	ev, ok, err := parseResponsesFrame("response.refusal.delta", `{"type":"response.refusal.delta","delta":"I can't"}`)
+	if err != nil || !ok || ev.Type != SETextDelta || ev.Text != "I can't" {
+		t.Fatalf("event=%+v ok=%t err=%v", ev, ok, err)
+	}
+	done, ok, err := parseResponsesFrame("response.completed", `{"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"refusal","refusal":"I can't"}]}]}}`)
+	if err != nil || !ok || done.Type != SEMessageDelta || done.StopReason != "refusal" {
+		t.Fatalf("done=%+v ok=%t err=%v", done, ok, err)
+	}
+}
+
 // TestToResponsesInput checks the neutral→input-item translation: tool_use →
 // function_call, tool_result → function_call_output (call_id paired), text →
 // role message, thinking dropped.

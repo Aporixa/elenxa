@@ -6,8 +6,8 @@ Autonomous penetration-testing agent (Go backend + Next.js frontend), from [Apor
 
 </div>
 
-> *Elenxa* comes from the Socratic *elenchus*: questioning a claim until it gives way and exposes what was not
-> understood (*aporia*). That is what this tool does to a target.
+> _Elenxa_ comes from the Socratic _elenchus_: questioning a claim until it gives way and exposes what was not
+> understood (_aporia_). That is what this tool does to a target.
 
 **Use it only against systems you own or are explicitly authorized to test.** Read [SECURITY.md](SECURITY.md) first.
 
@@ -16,7 +16,8 @@ Autonomous penetration-testing agent (Go backend + Next.js frontend), from [Apor
 Elenxa is a derivative of **ARTEX v0.3.15** by Autumn-27, an LLM multi-agent penetration-testing system released
 under AGPL-3.0. The original repository is no longer available; exact source and verification details are in
 [PROVENANCE.md](PROVENANCE.md). Elenxa also includes a patched copy of [Norma](https://github.com/Autumn-27/Norma)
-(Apache-2.0) in `third_party/norma`. Elenxa is not affiliated with or endorsed by the ARTEX authors.
+(Apache-2.0) in `third_party/norma`. Elenxa is not affiliated with or endorsed by the ARTEX authors. Any other
+inspiration or reference code and or outside ideas for this project, are listed below in _'Sources and Related Projects'_.
 
 ## Hardened build
 
@@ -45,7 +46,6 @@ The original (upstream) documentation follows; installation/update instructions 
 
 The global "Approval records", the in-task "Interception approvals" and the approval cards in chat all support expanding to view details. The layout is modeled on
 [AegisHook's approval detail component](https://github.com/RuoJi6/AegisHook/blob/main/web/src/components/CallDetail.vue), using Elenxa's own components and theme:
-
 
 ---
 
@@ -125,9 +125,12 @@ Upgrading replaces only the program, not the data: the Postgres data volume `pgd
 ```json
 {
   "database": {
-    "host": "127.0.0.1", "port": 5432,
-    "user": "elenxa", "password": "yourpass",
-    "dbname": "elenxa", "sslmode": "disable"
+    "host": "127.0.0.1",
+    "port": 5432,
+    "user": "elenxa",
+    "password": "yourpass",
+    "dbname": "elenxa",
+    "sslmode": "disable"
   }
 }
 ```
@@ -138,6 +141,31 @@ Optional: `ELENXA_LLM_PROVIDER` / `ELENXA_LLM_MODEL` / `ELENXA_LLM_BASE_URL` / `
 **Concurrency**: the number of work agents per task is configured in "System settings" (default 3).
 
 **Common flags**: `./start.sh -addr 127.0.0.1:8787 -proxy 127.0.0.1:8788` (`-addr` frontend + API, `-proxy` traffic recording proxy). The start script passes the flags through to `elenxa` unchanged.
+
+### Research and benchmarking
+
+Elenxa includes deterministic research services around the existing planner and workers:
+
+- a versioned local technique catalog available through `search_research_knowledge`;
+- task-local SARIF, Nmap XML and Nuclei JSONL ingestion through `import_scanner_results`;
+- consecutive duplicate-call detection across built-in, custom, MCP, skill and domain tools;
+- transparent attack-path ranking from priority, evidence, scope, estimated cost and prior exact failures;
+- provider-refusal control events and task research metrics at `GET /api/tasks/{id}/research-metrics`;
+- an offline Promptfoo case importer and a full-task benchmark runner with independent lab oracles, egress adapters and deterministic scoring.
+
+Build and validate the benchmark CLI without contacting a model provider:
+
+```bash
+go build -o dist/elenxa-bench ./cmd/elenxa-bench
+dist/elenxa-bench validate -scenario benchmark/scenarios/juiceshop-steering.example.json
+dist/elenxa-bench import promptfoo \
+  -input cases/promptfooconfig.yaml \
+  -template benchmark/scenarios/warden-template.json \
+  -source-version '<pinned version or commit>' \
+  -dry-run
+```
+
+Promptfoo import accepts frozen inline cases only. The Elenxa scenario remains authoritative for lab reset, scope, model profiles, controls, fixtures and oracle behavior. See [Benchmark runner](docs/benchmark-runner.md) and [Research tools reference](docs/research-tools.md).
 
 ### Reverse proxy deployment (HTTPS / only 443 exposed)
 
@@ -170,8 +198,6 @@ server {
 
 ---
 
-
-
 ## Development
 
 ### Manual vulnerability retest
@@ -194,7 +220,6 @@ In this version the history is viewed through the vulnerability details and sess
 - Frontend: `cd web && npm run dev` (`/api` is reverse-proxied to the backend, with hot reload)
 - Tests: `go test ./...`
 - Mock preview (no backend): `cd web && NEXT_PUBLIC_MOCK=1 npm run dev`
-
 
 ---
 
@@ -249,14 +274,14 @@ flowchart TB
   MA -.-> EXT
 ```
 
-| Layer | Responsibility |
-| --- | --- |
-| **Frontend** | Next.js static export, embedded into the single binary via `go:embed`; visualizes tasks/assets/exploration chains/coverage map, human-in-the-loop chat |
-| **server** | `net/http` routing + JWT auth + SSE; `Manager` hosts the lifecycle of tasks, engines and DB stores |
-| **engine** | One `plannerLoop` + N worker goroutines per task; intent claiming, timeout/pause/drain |
-| **agent** | goals / planner / worker / mainagent; `ToolSet` exposes the dual graph as LLM tools |
-| **db** | Postgres persistence of the dual graph (pgx); the schema is embedded via `go:embed` and tables are created idempotently on every start |
-| **Supporting** | Recording MITM proxy, approval gate, async enrichment, MCP/skills/memory/reports |
+| Layer          | Responsibility                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Frontend**   | Next.js static export, embedded into the single binary via `go:embed`; visualizes tasks/assets/exploration chains/coverage map, human-in-the-loop chat |
+| **server**     | `net/http` routing + JWT auth + SSE; `Manager` hosts the lifecycle of tasks, engines and DB stores                                                     |
+| **engine**     | One `plannerLoop` + N worker goroutines per task; intent claiming, timeout/pause/drain                                                                 |
+| **agent**      | goals / planner / worker / mainagent; `ToolSet` exposes the dual graph as LLM tools                                                                    |
+| **db**         | Postgres persistence of the dual graph (pgx); the schema is embedded via `go:embed` and tables are created idempotently on every start                 |
+| **Supporting** | Recording MITM proxy, approval gate, async enrichment, MCP/skills/memory/reports                                                                       |
 
 ### Dual-graph architecture: exploration graph + asset graph
 
@@ -368,10 +393,19 @@ So in an "event-driven + stateless session" environment the attack chain still *
 
 ---
 
-## References
+## Sources and related projects
 
-https://github.com/oritera/Cairn
+[PROVENANCE.md](PROVENANCE.md) records Elenxa's code lineage, bundled dependencies, and license notices. Unless that file states otherwise, the projects below are references or interoperability targets. Elenxa does not bundle their code.
 
+The current research and benchmark features refer to these projects:
+
+- [Promptfoo](https://github.com/promptfoo/promptfoo) is the input format for the offline frozen-case importer and a source for the adversarial-AI technique catalog.
+- [0din Prompt Toolkit](https://github.com/0din-ai/prompt-toolkit), [0din-JEF](https://github.com/0din-ai/0din-JEF), [PyRIT](https://github.com/microsoft/PyRIT), [DeepTeam](https://github.com/confident-ai/deepteam), and [Garak](https://github.com/NVIDIA/garak) inform the technique catalog and external case-generation workflow.
+- A [pinned CyberStrikeAI source revision](https://github.com/RuoJi6/CyberStrikeAI/blob/54d56774b8bd285817d16d48b70a4a5e6e0963f7/internal/app/vulnerability_tools.go) informed the prompt guidance described in [Finding and traffic evidence](docs/finding-traffic-evidence.md).
+- The [OWASP GenAI Security Project](https://genai.owasp.org/) is a source for entries in the local technique catalog.
+- [AegisHook](https://github.com/RuoJi6/AegisHook) provided a layout reference for the approval detail view.
+
+[Cairn](https://github.com/oritera/Cairn) was reviewed during comparative design research. It is not a runtime dependency.
 
 ## License
 

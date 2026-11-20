@@ -643,9 +643,11 @@ func splitLines(s string) []string {
 // WorkerTools returns the tool set for a work agent.
 func (t *ToolSet) WorkerTools() []actool.CoreTool {
 	return []actool.CoreTool{
+		researchKnowledgeTool(),
 		// list_findings is kept: check this task's confirmed findings before reporting, to avoid reporting the same finding twice.
 		t.listFindings(),
 		t.addFinding(), t.recordFact(), t.recordResearchEvent(),
+		t.importScannerResults(),
 		// asset management (handlers guard nil store internally).
 		// add_company_scope is not given to worker: defining company asset scope is the job of planner/main/Auto; worker only executes exploration.
 		t.insertAssets(), t.listAssets(),

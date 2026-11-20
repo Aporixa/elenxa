@@ -33,6 +33,7 @@ Thumbs.db
 
 # Single-binary build output with the embedded frontend
 /elenxa
+/elenxa.exe
 # Intermediate files the one-click updater leaves next to the executable (staged copy / backup / failed version / upgrade marker)
 /elenxa.new
 /elenxa.new.sha256
@@ -41,6 +42,15 @@ Thumbs.db
 /elenxa.upgrade.json
 /server/webui/dist/
 /dist/
+
+# Generated Go dependency tree. Docker builds require it locally, but the
+# canonical dependency inputs are go.mod, go.sum, and third_party/norma.
+/vendor/
+
+# Local Go test and coverage output
+*.test
+/coverage.out
+/coverage.html
 
 # JWT signing key (generated at runtime, stored in the project root, never commit)
 /jwt.key
@@ -53,6 +63,7 @@ Thumbs.db
 
 # bench benchmark related (local output, do not commit)
 /bench/
+/benchmark/results/
 /Dockerfile.bench
 /Dockerfile.bench.v2
 # hardened local build
@@ -62,3 +73,8 @@ Thumbs.db
 /elenxa-browser-mcp
 /setup-token
 web/out/
+
+# Local research, reports, and decision logs
+/reports/
+/research_notes/
+/.audit/

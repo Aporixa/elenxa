@@ -25,12 +25,17 @@ func (s *Server) taskResearchMetrics(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	controls, err := s.m.pg.ResearchControlEvents(taskID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	assets := s.m.Assets()
 	if assets == nil {
 		writeErr(w, http.StatusServiceUnavailable, "asset store is not enabled")
 		return
 	}
-	scope, err := assets.ListTaskScope(taskID)
+	scope, err := assets.ListTaskScopeWithSources(taskID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -48,8 +53,32 @@ func (s *Server) taskResearchMetrics(w http.ResponseWriter, r *http.Request) {
 		metricScope = append(metricScope, researchmetrics.ScopeEntry{
 			ID: entry.ID, Kind: entry.Kind, Domain: entry.Domain, Net: entry.Net, Source: entry.Source, Reason: entry.Reason,
 		})
+		if entry.Kind != "company" || entry.CompanyID == nil {
+			continue
+		}
+		rules, scopeErr := s.m.pg.Companies().GetScope(*entry.CompanyID)
+		if scopeErr != nil {
+			writeErr(w, http.StatusInternalServerError, scopeErr.Error())
+			return
+		}
+		for _, rule := range rules {
+			kind := rule.Kind
+			if kind == "domain" {
+				kind = "root_domain"
+			}
+			metricScope = append(metricScope, researchmetrics.ScopeEntry{
+				ID: rule.ID, Kind: kind, Domain: rule.Domain, Net: rule.Net,
+				Source: "company", Reason: rule.Reason,
+			})
+		}
 	}
-	report := researchmetrics.Analyze(metricCalls, metricScope)
+	metricControls := make([]researchmetrics.ControlEvent, 0, len(controls))
+	for _, control := range controls {
+		metricControls = append(metricControls, researchmetrics.ControlEvent{
+			ActivityID: control.ActivityID, Worker: control.Worker, Metadata: control.Metadata,
+		})
+	}
+	report := researchmetrics.AnalyzeWithControls(metricCalls, metricScope, metricControls)
 	report.Context, err = s.researchBenchmarkContext(task, taskID, assets)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())

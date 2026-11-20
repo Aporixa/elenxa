@@ -22,6 +22,34 @@ dist/elenxa-bench run \
 
 The checked-in scenario is an example. Replace its oracle URL, target scope, fixture installation, and model profile IDs with the pinned lab values before running it.
 
+## Import frozen Promptfoo cases
+
+Use an Elenxa scenario as the lab template. The template owns the target scope, model profiles, reset command, fixture, oracle, egress adapters, and limits. Promptfoo does not define those controls.
+
+Add `{{promptfoo_input}}` where the rendered case belongs in `task.description`. Add `{{promptfoo_case_id}}` where you need the external case ID. If the description omits `{{promptfoo_input}}`, the importer appends the rendered input. The importer changes `task.goal` only when the goal contains a placeholder.
+
+Run a dry import first:
+
+```sh
+dist/elenxa-bench import promptfoo \
+  -input cases/promptfooconfig.yaml \
+  -template benchmark/scenarios/warden-template.json \
+  -source-version '<pinned Promptfoo version or commit>' \
+  -dry-run
+```
+
+Write the converted scenarios after you review the diagnostics:
+
+```sh
+dist/elenxa-bench import promptfoo \
+  -input cases/promptfooconfig.yaml \
+  -template benchmark/scenarios/warden-template.json \
+  -source-version '<pinned Promptfoo version or commit>' \
+  -out benchmark/scenarios/imported
+```
+
+The importer accepts concrete inline tests in JSON or YAML. It rejects generation-only configurations, dynamic or file-backed prompts, and unresolved variables. It preserves Promptfoo assertions as `external_assertions` because a prompt-level assertion is not automatically a lab oracle. Import does not contact Elenxa or a model provider.
+
 ## Adapters
 
 The lab oracle proves outcome independently of Elenxa. An HTTP oracle checks status and optional body text or regular expression. A command oracle succeeds only when an explicitly named executable exits zero. Commands are never evaluated by a shell.
@@ -45,8 +73,12 @@ Each result distinguishes:
 - observed in-scope, out-of-scope, and unresolved egress;
 - assertion outcomes and adapter errors.
 
+When research metrics are available, the result also contains a deterministic score. The score keeps oracle success, scope adherence, target resolution, control recovery, and configured-time efficiency as separate components. A component is omitted when the run has no applicable observations. The score describes one run and does not claim statistical significance.
+
 If a run exceeds `max_run_seconds`, the runner attempts to pause the task so it cannot continue spending model calls after the trial ends.
 
 ## External AI evaluation tools
 
 Promptfoo remains useful for fast deterministic prompt-level regression and for producing case matrices. Its output should be converted to scenario fields: case ID, input/task text, technique ID, seed, scope, controls, and expected oracle. Elenxa's internal runner then owns VM reset, full task execution, task telemetry, oracle evaluation, and egress classification. This is integration at the benchmark boundary, not an isolated external report and not a second planner in the task loop.
+
+See [Research tools reference](research-tools.md) for the local knowledge, scanner import, repeat prevention, and attack-path ranking behavior.

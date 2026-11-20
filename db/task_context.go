@@ -10,6 +10,11 @@ import (
 
 const IntentBlockedLLMQuota = "llm_quota_exhausted"
 
+// IntentBlockedModelRefused marks an intent whose worker run was declined by the
+// provider (stop_reason "refusal"). It is never reopened automatically: re-sending
+// the same request yields the same platform decision.
+const IntentBlockedModelRefused = "model_refused"
+
 // TaskLLMProfile is one ordered entry in a task's explicit failover chain.
 type TaskLLMProfile struct {
 	ProfileID   int64      `json:"profile_id"`

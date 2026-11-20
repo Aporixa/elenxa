@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Aporixa/elenxa/researchmetrics"
 )
 
 type Runner struct {
@@ -93,6 +95,18 @@ func (r *Runner) Run(ctx context.Context, scenario Scenario, trial int) (result 
 	}
 	result.FinishedAt = time.Now().UTC()
 	result.Oracle = evaluateOracle(ctx, scenario.Oracle, env)
+	if len(result.Metrics) > 0 {
+		var report researchmetrics.Report
+		if json.Unmarshal(result.Metrics, &report) == nil {
+			score := researchmetrics.Score(researchmetrics.ScoreInput{
+				OraclePassed: result.Oracle.Passed,
+				Duration:     result.FinishedAt.Sub(runStarted),
+				MaxDuration:  time.Duration(scenario.Elenxa.MaxRunSeconds) * time.Second,
+				Report:       report,
+			})
+			result.Score = &score
+		}
+	}
 	for _, adapter := range scenario.Egress {
 		result.Egress = append(result.Egress, collectEgress(ctx, r.client, adapter, scenario.Task.Scope, runStarted, result.FinishedAt, env))
 	}

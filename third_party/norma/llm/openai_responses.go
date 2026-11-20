@@ -191,7 +191,14 @@ func parseResponsesFrame(event, data string) (StreamEvent, bool, error) {
 		} `json:"item"`
 		Delta    string `json:"delta"` // *_text.delta / function_call_arguments.delta
 		Response struct {
-			Status            string `json:"status"`
+			Status string `json:"status"`
+			Output []struct {
+				Type    string `json:"type"`
+				Content []struct {
+					Type    string `json:"type"`
+					Refusal string `json:"refusal"`
+				} `json:"content"`
+			} `json:"output"`
 			IncompleteDetails *struct {
 				Reason string `json:"reason"`
 			} `json:"incomplete_details"`
@@ -217,6 +224,10 @@ func parseResponsesFrame(event, data string) (StreamEvent, bool, error) {
 		if f.Delta != "" {
 			return StreamEvent{Type: SETextDelta, Text: f.Delta}, true, nil
 		}
+	case "response.refusal.delta":
+		if f.Delta != "" {
+			return StreamEvent{Type: SETextDelta, Text: f.Delta}, true, nil
+		}
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 		if f.Delta != "" {
 			return StreamEvent{Type: SEThinkingDelta, Text: f.Delta}, true, nil
@@ -227,6 +238,13 @@ func parseResponsesFrame(event, data string) (StreamEvent, bool, error) {
 		}
 	case "response.completed", "response.incomplete":
 		ev := StreamEvent{Type: SEMessageDelta, StopReason: "end_turn"}
+		for _, item := range f.Response.Output {
+			for _, content := range item.Content {
+				if content.Type == "refusal" {
+					ev.StopReason = "refusal"
+				}
+			}
+		}
 		if f.Response.IncompleteDetails != nil && f.Response.IncompleteDetails.Reason == "max_output_tokens" {
 			ev.StopReason = "max_tokens"
 		}
@@ -294,8 +312,9 @@ func parseResponsesResponse(raw []byte) (Message, string, Usage, error) {
 			Type    string `json:"type"`
 			Role    string `json:"role"`
 			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type    string `json:"type"`
+				Text    string `json:"text"`
+				Refusal string `json:"refusal"`
 			} `json:"content"`
 			Summary []struct {
 				Type string `json:"type"`
@@ -326,12 +345,18 @@ func parseResponsesResponse(raw []byte) (Message, string, Usage, error) {
 	}
 	var blocks []ContentBlock
 	hasToolCall := false
+	hasRefusal := false
 	for _, item := range r.Output {
 		switch item.Type {
 		case "message":
 			for _, c := range item.Content {
 				if c.Type == "output_text" && c.Text != "" {
 					blocks = append(blocks, TextBlock(c.Text))
+				} else if c.Type == "refusal" {
+					hasRefusal = true
+					if c.Refusal != "" {
+						blocks = append(blocks, TextBlock(c.Refusal))
+					}
 				}
 			}
 		case "reasoning":
@@ -364,6 +389,9 @@ func parseResponsesResponse(raw []byte) (Message, string, Usage, error) {
 	stop := "end_turn"
 	if hasToolCall {
 		stop = "tool_use"
+	}
+	if hasRefusal {
+		stop = "refusal"
 	}
 	if r.IncompleteDetails != nil && r.IncompleteDetails.Reason == "max_output_tokens" {
 		stop = "max_tokens"

@@ -151,3 +151,18 @@ func TestAnalyzeSeparatesSCPRemoteFromLocalPath(t *testing.T) {
 		t.Fatalf("scp parsing = %s %#v", got, report.Calls[0].Candidates)
 	}
 }
+
+func TestAnalyzeIncludesHostControlEvents(t *testing.T) {
+	report := AnalyzeWithControls(nil, nil, []ControlEvent{{
+		ActivityID: 42,
+		Worker:     "planner",
+		Metadata:   []byte(`{"event_type":"platform_refusal","summary":"provider refused","impact":"blocked","changed_plan":true}`),
+	}})
+	if len(report.Events) != 1 {
+		t.Fatalf("events = %#v", report.Events)
+	}
+	event := report.Events[0]
+	if event.ActivityID != 42 || event.Worker != "planner" || event.EventType != "platform_refusal" || !event.Recorded || event.Outcome != "completed" {
+		t.Fatalf("event = %#v", event)
+	}
+}

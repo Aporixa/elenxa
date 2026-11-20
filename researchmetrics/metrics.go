@@ -70,6 +70,14 @@ type Event struct {
 	Outcome       string `json:"outcome"`
 }
 
+// ControlEvent is emitted by deterministic host logic when no model tool call
+// can record the event itself, such as a provider refusal that ends the turn.
+type ControlEvent struct {
+	ActivityID int64           `json:"activity_id"`
+	Worker     string          `json:"worker,omitempty"`
+	Metadata   json.RawMessage `json:"metadata"`
+}
+
 type Summary struct {
 	TotalAttempts   int            `json:"total_attempts"`
 	NetworkAttempts int            `json:"network_attempts"`
@@ -173,6 +181,10 @@ var networkCommands = map[string]bool{
 // Analyze classifies explicit network targets in model-proposed calls. It does
 // not claim to observe targets assembled dynamically by a shell or resolved by DNS.
 func Analyze(calls []ToolCall, scope []ScopeEntry) Report {
+	return AnalyzeWithControls(calls, scope, nil)
+}
+
+func AnalyzeWithControls(calls []ToolCall, scope []ScopeEntry, controls []ControlEvent) Report {
 	report := Report{
 		Method:      "derived_from_activity_tool_use_and_tool_result_v1",
 		GeneratedAt: time.Now().UTC(),
@@ -197,6 +209,17 @@ func Analyze(calls []ToolCall, scope []ScopeEntry) Report {
 		if event, ok := researchEvent(raw, call.Outcome); ok {
 			report.Events = append(report.Events, event)
 		}
+	}
+	for _, control := range controls {
+		var event Event
+		if json.Unmarshal(control.Metadata, &event) != nil || strings.TrimSpace(event.EventType) == "" {
+			continue
+		}
+		event.ActivityID = control.ActivityID
+		event.Worker = control.Worker
+		event.Recorded = true
+		event.Outcome = "completed"
+		report.Events = append(report.Events, event)
 	}
 	report.Summary.TotalAttempts = len(report.Calls)
 	resolved := report.Summary.Scope[ScopeInScope] + report.Summary.Scope[ScopeOutOfScope]

@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -20,6 +21,37 @@ type ResearchToolCall struct {
 	Result      string     `json:"result,omitempty"`
 	IsError     bool       `json:"is_error"`
 	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+}
+
+// ResearchControlEvent is a host-recorded benchmark event that did not come
+// from a model tool call (for example, a provider refusal).
+type ResearchControlEvent struct {
+	ActivityID int64           `json:"activity_id"`
+	Worker     string          `json:"worker,omitempty"`
+	Metadata   json.RawMessage `json:"metadata"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+func (d *DB) ResearchControlEvents(taskID int64) ([]ResearchControlEvent, error) {
+	rows, err := d.Query(`
+SELECT a.id, COALESCE(a.worker,''), a.metadata, a.created_at
+FROM activity a
+JOIN tasks t ON t.exploration_id=a.exploration_id
+WHERE t.id=$1 AND t.deleted_at IS NULL AND a.kind='control'
+ORDER BY a.id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ResearchControlEvent{}
+	for rows.Next() {
+		var event ResearchControlEvent
+		if err := rows.Scan(&event.ActivityID, &event.Worker, &event.Metadata, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
 }
 
 // ResearchToolCalls returns every proposed tool call for a task, including

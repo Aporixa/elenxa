@@ -10,6 +10,7 @@ import (
 
 	"github.com/Aporixa/elenxa/agent"
 	"github.com/Aporixa/elenxa/db"
+	"github.com/Autumn-27/norma/harness"
 )
 
 type goalSpec struct {
@@ -46,7 +47,7 @@ func (s *Server) startTaskEngine(t *Task) {
 	}
 	s.engine.emitActivity(t, db.Activity{Worker: "planner", Kind: "round",
 		Summary: "Round 0 goal decomposition"})
-	goals := s.createGoals(ctx, t, func(r db.Activity) {
+	goals, reason := s.createGoals(ctx, t, func(r db.Activity) {
 		s.engine.emitActivity(t, r)
 	})
 	if ctx.Err() != nil || s.engine.IsDeleting(t.ID) {
@@ -58,6 +59,12 @@ func (s *Server) startTaskEngine(t *Task) {
 			summary = fmt.Sprintf("[%s] %s", g.VulnClass, g.Text)
 		}
 		s.engine.emitActivity(t, db.Activity{Worker: "planner", Kind: "text", Summary: summary})
+	}
+	if reason == harness.ReasonRefused {
+		if err := s.engine.pauseOnRefusal(t, "goals"); err != nil {
+			log.Printf("[goals] task %s refusal pause failed: %v", t.ID, err)
+		}
+		return
 	}
 	if ctx.Err() != nil || s.engine.IsDeleting(t.ID) {
 		return
@@ -368,9 +375,9 @@ func (s *Server) reviveTask(t *Task) {
 // is used verbatim as a single goal so the task still has something to judge against.
 // Returns the seeded specs so callers can emit activity records for them.
 // emit, when non-nil, is forwarded to DecomposeGoals so LLM steps are visible in the UI.
-func (s *Server) createGoals(ctx context.Context, t *Task, emit func(db.Activity)) []goalSpec {
+func (s *Server) createGoals(ctx context.Context, t *Task, emit func(db.Activity)) ([]goalSpec, harness.TerminalReason) {
 	if t == nil {
-		return nil
+		return nil, ""
 	}
 	// Use the SAME LLM the task runs on (its pinned profile, else the active profile),
 	// NOT agent.FromEnv() — the LLM is configured via the UI (DB profile), not env vars,
@@ -384,7 +391,7 @@ func (s *Server) createGoals(ctx context.Context, t *Task, emit func(db.Activity
 	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
 	s.engine.BeginLLMCall(t.ID)
 	goalRuntime := s.agentsForTask(t).runtime
-	decomposed := agent.DecomposeGoalsWithProvider(ctx, goalRuntime, s.m.dir, t.Goal, t.Description, as, t.Store, taskID, goalRuntime.nonStreaming(), goalRuntime.maxTokens(), emit)
+	decomposed, reason := agent.DecomposeGoalsWithProvider(ctx, goalRuntime, s.m.dir, t.Goal, t.Description, as, t.Store, taskID, goalRuntime.nonStreaming(), goalRuntime.maxTokens(), emit)
 	s.engine.EndLLMCall(t.ID)
 	for _, g := range decomposed {
 		if strings.TrimSpace(g.Text) != "" {
@@ -405,5 +412,5 @@ func (s *Server) createGoals(ctx context.Context, t *Task, emit func(db.Activity
 			specs = []goalSpec{{Text: g}}
 		}
 	}
-	return specs
+	return specs, reason
 }

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/Aporixa/elenxa/db"
 	"github.com/Autumn-27/norma/agentcore"
+	"github.com/Autumn-27/norma/harness"
 	"github.com/Autumn-27/norma/llm"
 	acperm "github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
@@ -74,8 +76,8 @@ type GoalSpec struct {
 
 // DecomposeGoals asks the LLM to break a pentest task goal into discrete,
 // independently-verifiable objectives (each becomes a goal node). Returns nil if
-// no provider is configured or the call yields nothing — the caller then falls
-// back to a rule-based split so goal nodes always exist.
+// no provider is configured or the call yields nothing. The server retains the
+// raw task goal as one goal when decomposition produces no goals.
 //
 // prov is supplied by the caller (rather than built here from a Config) so goal
 // decomposition rides the SAME provider instance as the rest of the engine — it
@@ -100,16 +102,18 @@ func DecomposeGoals(ctx context.Context, prov llm.Provider, dataDir, goalText, d
 	if prov == nil {
 		return nil
 	}
-	return DecomposeGoalsWithProvider(ctx, prov, dataDir, goalText, desc, as, ts, taskID, false, 0, emit)
+	goals, _ := DecomposeGoalsWithProvider(ctx, prov, dataDir, goalText, desc, as, ts, taskID, false, 0, emit)
+	return goals
 }
 
 // DecomposeGoalsWithProvider is the task-runtime variant used when a task has an
 // ordered provider chain. It preserves the same tools and write behavior while
 // letting the caller own provider selection/failover. maxTokens is the profile's
-// per-reply output cap (0 = send none).
-func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir, goalText, desc string, as *db.AssetStore, ts *db.ExplorationStore, taskID int64, nonStreaming bool, maxTokens int, emit func(db.Activity)) []GoalSpec {
+// per-reply output cap (0 = send none). It also returns the model loop's terminal
+// reason so the server can pause before another call after a provider refusal.
+func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir, goalText, desc string, as *db.AssetStore, ts *db.ExplorationStore, taskID int64, nonStreaming bool, maxTokens int, emit func(db.Activity)) ([]GoalSpec, harness.TerminalReason) {
 	if prov == nil {
-		return nil
+		return nil, ""
 	}
 	// Goal decomposition is a one-shot call: no transcript store is attached, so agentcore
 	// won't put a session id on ctx (it only does so when there's a writer, see
@@ -153,7 +157,7 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 			emit(r)
 		}
 	}
-	captureRun(ctx, agentcore.Options{
+	_, goalReason, _ := captureRun(ctx, agentcore.Options{
 		Provider:               prov,
 		SystemPrompt:           []string{sys},
 		Tools:                  tools,
@@ -164,10 +168,16 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 		NonStreaming: nonStreaming, // uses Provider.Complete when the profile selects non-streaming
 		MaxTokens:    maxTokens,    // 0 = send no cap; the server default decides
 	}, userMsg, captureEmit)
+	if goalReason == harness.ReasonRefused {
+		log.Printf("[goals] task %d: goal decomposition declined by the model provider (stop_reason=refusal; platform-control block)", taskID)
+		captureEmit(db.Activity{Kind: "text", IsError: true,
+			Summary: "Goal decomposition declined by the model provider (stop_reason=refusal)",
+			Detail:  "The provider's safety/usage-policy control declined the goal-decomposition request. This is a platform-control block, not an empty result; the raw task goal will be used as a single goal."})
+	}
 	// set_goals persisted the goals directly; read them back so the caller sees what
 	// was written (empty slice ⇒ the LLM produced nothing ⇒ caller falls back).
 	if ts == nil {
-		return nil
+		return nil, goalReason
 	}
 	nodes, _ := ts.ListByKind(db.KindGoal, 10000)
 	var out []GoalSpec
@@ -181,5 +191,5 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 			out = append(out, GoalSpec{Text: p.Text, VulnClass: p.VulnClass})
 		}
 	}
-	return out
+	return out, goalReason
 }

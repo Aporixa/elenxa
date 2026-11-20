@@ -41,6 +41,19 @@ func ValidateScenario(s Scenario) error {
 	if strings.TrimSpace(s.ID) == "" {
 		return fmt.Errorf("scenario id is required")
 	}
+	if s.Provenance != nil {
+		if strings.TrimSpace(s.Provenance.Source) == "" || strings.TrimSpace(s.Provenance.ExternalCaseID) == "" || strings.TrimSpace(s.Provenance.RenderedInput) == "" {
+			return fmt.Errorf("provenance source, external_case_id, and rendered_input are required")
+		}
+		if !validSHA256(s.Provenance.SourceDigest) || !validSHA256(s.Provenance.ExternalCaseDigest) {
+			return fmt.Errorf("provenance digests must use sha256:<64 lowercase hex characters>")
+		}
+		for i, assertion := range s.Provenance.ExternalAssertions {
+			if assertion.Status == "" || len(assertion.Raw) == 0 || !json.Valid(assertion.Raw) {
+				return fmt.Errorf("provenance external_assertions[%d] requires status and valid raw JSON", i)
+			}
+		}
+	}
 	if strings.TrimSpace(s.Elenxa.BaseURL) == "" {
 		return fmt.Errorf("elenxa.base_url is required")
 	}
@@ -101,3 +114,7 @@ func ValidateScenario(s Scenario) error {
 	}
 	return nil
 }
+
+var sha256Pattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func validSHA256(value string) bool { return sha256Pattern.MatchString(value) }

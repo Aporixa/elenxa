@@ -483,12 +483,15 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// MaxDuration now interrupts running tools when the wall clock is up and wraps up in place (on a
 	// live ctx), so a stuck round no longer bypasses wrap-up and no external hard ctx backstop is
 	// needed. ctx only carries pause / kill / shutdown.
-	_, _, err = captureRun(ctx, opts, input,
+	_, runReason, err := captureRun(ctx, opts, input,
 		func(r db.Activity) {
 			if emit != nil {
 				r.Worker = "planner" // planner activity has no intent_id (it generates them)
 				emit(r)
 			}
 		})
+	if err == nil && runReason == harness.ReasonRefused {
+		err = ErrModelRefused
+	}
 	return tsx.GoalMet, tsx.Reason, err
 }
