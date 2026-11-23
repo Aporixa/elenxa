@@ -41,6 +41,8 @@ type Planner struct {
 	maxTokensFn       func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 	compactor         *Compactor                             // cold-node compaction (§7); nil = disabled
 	hooks             harness.HookRunner                     // per-task guard hooks (intercept rules); nil = none
+	engagementPolicy  db.EngagementPolicy
+	policyEvent       func(action, detail string)
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -97,6 +99,9 @@ func (p *Planner) compactionWindow() int {
 // SetProxy points the planner's WebFetch at the recording proxy plus the CA cert
 // it trusts to verify HTTPS through it (empty addr = direct).
 func (p *Planner) SetProxy(addr, caCert string) { p.proxyAddr, p.proxyCACert = addr, caCert }
+func (p *Planner) SetEngagementPolicy(v db.EngagementPolicy, event func(string, string)) {
+	p.engagementPolicy, p.policyEvent = v, event
+}
 
 // SetWebSearch selects the web_search backend for the planner (off by default).
 func (p *Planner) SetWebSearch(o WebSearchOpts) { p.webSearch = o }
@@ -385,6 +390,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
 	tools, def, cleanup := AugmentTools(ctx, "planner", base)
 	defer cleanup()
+	tools = applyEngagementPolicy(tools, p.engagementPolicy, p.policyEvent)
 	// The key situation (just-finished intents + the prefetched full graph) now goes into [this
 	// round's user input] (see input below); system keeps only the static planning body. Moving it
 	// out keeps system stable each round and cache-friendlier; the cost is that if a single round
@@ -403,6 +409,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	taskDir := ensureRunDir(p.workDir, taskID, 0)
 	ctx = intercept.WithReviewContext(ctx, taskDir, intercept.ReviewBackground{})
 	sysBody := plannerSystem(goal, p.workDir, taskDir)
+	sysBody += engagementPrompt(p.engagementPolicy)
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // inject operational constraints (if any) into the system prompt to bound exploration
 	}

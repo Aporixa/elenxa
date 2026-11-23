@@ -85,7 +85,9 @@ type Worker struct {
 	noaEnabledFn func() bool
 	// maxTokensFn resolves the per-reply output cap in tokens, on the same
 	// per-run basis. nil or 0 = send no cap and let the endpoint decide.
-	maxTokensFn func() int
+	maxTokensFn      func() int
+	engagementPolicy db.EngagementPolicy
+	policyEvent      func(action, detail string)
 }
 
 // WorkerSessionID returns the stable transcript key used by a worker intent.
@@ -188,6 +190,9 @@ func (w *Worker) compactionWindow() int {
 // traffic through, plus the CA cert path WebFetch trusts to verify HTTPS through
 // that MITM proxy. Empty addr disables the hint.
 func (w *Worker) SetProxy(addr, caCert string) { w.proxyAddr, w.proxyCACert = addr, caCert }
+func (w *Worker) SetEngagementPolicy(p db.EngagementPolicy, event func(string, string)) {
+	w.engagementPolicy, w.policyEvent = p, event
+}
 
 // SetWebSearch selects the web_search backend for this worker (off by default).
 func (w *Worker) SetWebSearch(o WebSearchOpts) { w.webSearch = o }
@@ -387,6 +392,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts), IntentID: intent.ID})
 	tools, def, cleanup := AugmentTools(ctx, "worker", base)
 	defer cleanup()
+	tools = applyEngagementPolicy(tools, w.engagementPolicy, w.policyEvent)
 
 	// The intent is the worker's [sole responsibility, an invariant throughout the whole run] → put it,
 	// together with the launch instruction and the raw data of the intent's anchored target assets, into
@@ -404,6 +410,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	ctx = intercept.WithReviewContext(ctx, runDir, intercept.ReviewBackground{})
 	overview := renderWorkerGraphOverview(tsx.graphOverviewData())
 	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir)
+	sysBody += engagementPrompt(w.engagementPolicy)
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // operation constraints (if any) injected into the system prompt; the worker strictly follows them
 	}

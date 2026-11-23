@@ -4,6 +4,19 @@
 export type TaskStatus = "created" | "queued" | "running" | "paused" | "done" | "failed" | "timeout";
 export type EngineMode = "exploring" | "paused" | "stalled" | "idle";
 
+export interface EngagementPolicy {
+  profile: "lab" | "balanced" | "quiet" | "custom";
+  user_agent_mode: "preserve" | "browser" | "fixed";
+  user_agent?: string;
+  http_requests_per_second?: number;
+  http_burst?: number;
+  http_max_concurrent_per_host?: number;
+  http_max_requests?: number;
+  http_min_delay_ms?: number;
+  scanner_max_rate?: number;
+  scanner_max_concurrency?: number;
+}
+
 export interface Task {
   id: string;
   name?: string; // optional task name; empty/absent = unnamed, display falls back to the description
@@ -39,6 +52,7 @@ export interface Task {
   archive_blocked_by_task_id?: string; // live direct dependent that must be archived first
   company_ids?: number[]; // associated company scopes; current company assets join the task at creation
   coverage_enabled?: boolean; // asset coverage switch (set at creation, on by default); false = coverage not computed/shown
+  engagement_policy?: EngagementPolicy;
 }
 
 export interface TaskCategory {

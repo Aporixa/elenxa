@@ -259,6 +259,7 @@ export const api = {
     planHeartbeatSeconds?: number;
     coverageEnabled?: boolean;
     interceptRules?: AssetInterceptRuleInput[];
+    engagementPolicy?: import("./types").EngagementPolicy;
   }) =>
     post<Task>("/tasks", {
       name: input.name ?? "",
@@ -273,9 +274,10 @@ export const api = {
       plan_heartbeat_seconds: input.planHeartbeatSeconds ?? 0, // 0 = backend normalizes to the default 600 (10min)
       coverage_enabled: input.coverageEnabled ?? true, // on by default; false = disable asset coverage
       intercept_rules: input.interceptRules ?? [], // task-level asset intercept rules
+      engagement_policy: input.engagementPolicy ?? { profile: "lab", user_agent_mode: "preserve" },
     }),
   taskCategories: () => get<{ categories: TaskCategory[] }>("/task-categories").then((r) => arr(r.categories)),
-  updateTask: (id: string, input: { name?: string; pinned?: boolean }) => patch<Task>(`/tasks/${id}`, input),
+  updateTask: (id: string, input: { name?: string; pinned?: boolean; engagement_policy?: import("./types").EngagementPolicy }) => patch<Task>(`/tasks/${id}`, input),
   renameTask: (id: string, name: string) => patch<Task>(`/tasks/${id}`, { name }),
   pinTask: (id: string, pinned: boolean) => patch<Task>(`/tasks/${id}`, { pinned }),
   createTaskCategory: (name: string) => post<TaskCategory>("/task-categories", { name }),

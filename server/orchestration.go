@@ -515,7 +515,13 @@ func (s *Server) seedOrchestrationTools() {
 // inserts missing rows, so an operator can disable any skill for an ablation or
 // regression run and a restart will not silently turn it back on.
 func (s *Server) seedResearchSkillVisibility() {
-	skills := []string{"adversarial-environment", "ai-target-research", "lab-operations"}
+	skills := []string{
+		"adversarial-environment", "ai-target-research", "lab-operations",
+		"web-surface-mapping", "auth-session-testing", "authorization-testing",
+		"injection-testing", "file-path-testing", "api-protocol-testing",
+		"business-logic-testing", "client-browser-testing",
+		"network-service-enumeration", "evidence-verification",
+	}
 	for _, agentKey := range []string{"worker", "mainagent", "planner"} {
 		if err := s.m.pg.SeedAgentSkillVisibility(agentKey, skills); err != nil {
 			log.Printf("[skills] failed to seed research skills for %s: %v", agentKey, err)

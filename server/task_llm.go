@@ -549,6 +549,12 @@ func (s *Server) invalidateTaskAgents() {
 	s.taskAgentMu.Unlock()
 }
 
+func (s *Server) invalidateTaskAgent(taskID string) {
+	s.taskAgentMu.Lock()
+	delete(s.taskAgents, taskID)
+	s.taskAgentMu.Unlock()
+}
+
 func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	s.taskAgentMu.Lock()
 	defer s.taskAgentMu.Unlock()
@@ -568,7 +574,18 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk.SetMaxTokens(workerRuntime.maxTokens)       // likewise, the output cap follows the currently active profile
 	wk.SetNoaEnabled(s.m.NoaCompactionEnabled)     // experimental: noa context compaction (platform-level switch, read per run)
 	wk.SetRunTimeout(time.Duration(s.agentRunSeconds("worker")) * time.Second)
-	wk.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
+	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
+	engagementPolicy := t.engagementPolicySnapshot()
+	taskProxy := s.m.ProxyAddrForTask(taskID, engagementPolicy)
+	policyEvent := func(action, detail string) {
+		if tr := s.m.Traffic(); tr != nil {
+			tr.RecordPolicyEvent(taskID, action, detail)
+		} else {
+			log.Printf("[engagement] task=%d action=%s %s", taskID, action, detail)
+		}
+	}
+	wk.SetProxy(taskProxy, s.m.ProxyCACert())
+	wk.SetEngagementPolicy(engagementPolicy, policyEvent)
 	wk.SetWebSearch(s.webSearchFor("worker"))
 	wk.SetConstraintInject(s.constraintInjectWorker) // inject operation constraints into worker (configurable, on by default)
 	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, tx, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
@@ -579,7 +596,8 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	pl.SetNoaEnabled(s.m.NoaCompactionEnabled) // experimental: noa context compaction (platform-level switch, read per run)
 	pl.SetKillWork(s.engine.KillWork)
 	pl.SetSteerWork(s.engine.SteerWork)
-	pl.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
+	pl.SetProxy(taskProxy, s.m.ProxyCACert())
+	pl.SetEngagementPolicy(engagementPolicy, policyEvent)
 	pl.SetWebSearch(s.webSearchFor("planner"))
 	pl.SetConstraintInject(s.constraintInjectPlanner) // inject operation constraints into planner (configurable, on by default)
 	// cold-digest §7: background compaction of cold nodes. The engine, via the authoritative resolver, actually drives this per-task planner set
@@ -592,7 +610,8 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	main.SetNonStreaming(mainRuntime.nonStreaming)
 	main.SetMaxTokens(mainRuntime.maxTokens)
 	main.SetNoaEnabled(s.m.NoaCompactionEnabled) // experimental: noa context compaction (platform-level switch, read per run)
-	main.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
+	main.SetProxy(taskProxy, s.m.ProxyCACert())
+	main.SetEngagementPolicy(engagementPolicy, policyEvent)
 	main.SetWebSearch(s.webSearchFor("mainagent"))
 	main.SetSteerWork(s.engine.SteerWork) // steer_work: human real-time course correction of running work
 	if t.Guard != nil {
