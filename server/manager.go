@@ -59,6 +59,7 @@ type Task struct {
 	TimeoutSeconds       int                    `json:"timeout_seconds"`
 	PlanHeartbeatSeconds int                    `json:"plan_heartbeat_seconds"` // planner heartbeat trigger interval (seconds)
 	CoverageEnabled      bool                   `json:"coverage_enabled"`       // asset coverage feature switch (fixed at creation, on by default)
+	EngagementPolicy     pgdb.EngagementPolicy  `json:"engagement_policy"`
 	FirstRunAt           int64                  `json:"first_run_at,omitempty"`
 	DeadlineAt           int64                  `json:"deadline_at,omitempty"`
 	Store                *pgdb.ExplorationStore `json:"-"`
@@ -66,12 +67,25 @@ type Task struct {
 	notify               chan struct{}
 	lifecycleMu          sync.RWMutex
 	llmMu                sync.RWMutex
+	policyMu             sync.RWMutex
 
 	// pendingTriggers accumulates the concrete changes (worker done / finding) that
 	// fired planning rounds since the last one consumed them. The debounce coalesces
 	// a burst into one round, so several may pile up before drainTriggers() clears them.
 	trigMu          sync.Mutex
 	pendingTriggers []agent.TriggerEvent
+}
+
+func (t *Task) engagementPolicySnapshot() pgdb.EngagementPolicy {
+	t.policyMu.RLock()
+	defer t.policyMu.RUnlock()
+	return t.EngagementPolicy
+}
+
+func (t *Task) setEngagementPolicy(p pgdb.EngagementPolicy) {
+	t.policyMu.Lock()
+	t.EngagementPolicy = p
+	t.policyMu.Unlock()
 }
 
 // taskLifecycleState is an internally consistent view of the mutable task
@@ -776,6 +790,13 @@ func (m *Manager) ProxyAddr() string {
 	return m.globalProxy
 }
 
+func (m *Manager) ProxyAddrForTask(taskID int64, policy pgdb.EngagementPolicy) string {
+	if m.traffic != nil && m.TrafficEnabled() {
+		return m.traffic.ProxyAddrForTask(taskID, policy)
+	}
+	return m.ProxyAddr()
+}
+
 // ProxyCACert returns the CA cert path agents must trust to verify HTTPS through
 // the egress proxy. Non-empty ONLY when traffic capture is on (the MITM re-signs
 // certs): the global proxy used directly (capture off) is a plain forwarder that
@@ -866,8 +887,9 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		SourceTaskIDs:  append([]int64(nil), pt.SourceTaskIDs...),
 		CompanyIDs:     append([]int64(nil), pt.CompanyIDs...),
 		TimeoutSeconds: pt.TimeoutSeconds, PlanHeartbeatSeconds: pt.PlanHeartbeatSeconds,
-		CoverageEnabled: pt.CoverageEnabled,
-		FirstRunAt:      unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
+		CoverageEnabled:  pt.CoverageEnabled,
+		EngagementPolicy: pt.EngagementPolicy,
+		FirstRunAt:       unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
 		Store: store, Guard: guard.NewWithInterceptor(ic), notify: make(chan struct{}, 1),
 	}
 }
@@ -895,6 +917,9 @@ func (m *Manager) UpdateTaskMetadata(taskID string, patch pgdb.TaskPatch) (*Task
 		state.Name = updated.Name
 		state.PinnedAt = unixOrZero(updated.PinnedAt)
 	})
+	if patch.EngagementPolicy != nil {
+		task.setEngagementPolicy(updated.EngagementPolicy)
+	}
 	return task, nil
 }
 

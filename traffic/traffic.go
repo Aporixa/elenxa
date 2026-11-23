@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -73,6 +74,15 @@ CREATE TABLE IF NOT EXISTS blob_refs (
   PRIMARY KEY (hash, exchange_id)
 );
 CREATE INDEX IF NOT EXISTS idx_blob_refs_ex ON blob_refs(exchange_id);
+
+CREATE TABLE IF NOT EXISTS policy_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  task_id INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_policy_events_task_ts ON policy_events(task_id, ts);
 `
 
 // ftsSchema is applied separately from indexSchema: a driver build without FTS5
@@ -169,7 +179,20 @@ type Traffic struct {
 	// through (nil = dial targets directly). Both the intercepted and the
 	// transparent-passthrough paths honor it (go-mitmproxy's getUpstreamConn),
 	// so no host escapes it. Hot-swappable at runtime via SetUpstreamProxy.
-	upstream atomic.Pointer[url.URL]
+	upstream     atomic.Pointer[url.URL]
+	policyMu     sync.Mutex
+	policies     map[int64]db.EngagementPolicy
+	policyState  map[string]*policyRuntime
+	proxyClients map[string]int64
+	flowSlots    map[string]string
+}
+
+type policyRuntime struct {
+	inFlight    int
+	requests    int
+	tokens      float64
+	lastRefill  time.Time
+	lastRequest time.Time
 }
 
 // Open initializes the traffic tree, blob store and SQLite index under dir.
@@ -196,13 +219,13 @@ func Open(dir, addr string) (*Traffic, error) {
 	if !strings.ContainsRune(index, '?') {
 		dsn = "file:" + index + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	}
-	db, err := sql.Open("sqlite", dsn)
+	indexDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
-	t := &Traffic{dir: dir, addr: addr, db: db, closed: make(chan struct{})}
+	t := &Traffic{dir: dir, addr: addr, db: indexDB, closed: make(chan struct{}), policies: make(map[int64]db.EngagementPolicy), policyState: make(map[string]*policyRuntime), proxyClients: make(map[string]int64), flowSlots: make(map[string]string)}
 	if err := t.initIndex(); err != nil {
-		db.Close()
+		indexDB.Close()
 		return nil, err
 	}
 
@@ -212,7 +235,7 @@ func Open(dir, addr string) (*Traffic, error) {
 		CaRootPath:  filepath.Join(dir, "_ca"),
 	})
 	if err != nil {
-		db.Close()
+		indexDB.Close()
 		return nil, err
 	}
 	// go-mitmproxy writes the CA key/cert with its own modes; tighten to 0600.
@@ -232,6 +255,15 @@ func Open(dir, addr string) (*Traffic, error) {
 	p.SetShouldInterceptRule(func(req *http.Request) bool {
 		_, tunnel := t.pass.Load(hostOnly(req.Host))
 		return !tunnel
+	})
+	p.SetAuthProxy(func(_ http.ResponseWriter, req *http.Request) (bool, error) {
+		if taskID, ok := proxyTaskID(req.Header.Get("Proxy-Authorization")); ok {
+			t.policyMu.Lock()
+			t.proxyClients[req.RemoteAddr] = taskID
+			t.policyMu.Unlock()
+		}
+		req.Header.Del("Proxy-Authorization")
+		return true, nil
 	})
 	p.AddAddon(&sink{t: t})
 	t.proxy = p
@@ -330,6 +362,44 @@ func (t *Traffic) ProxyAddr() string {
 	return "http://" + t.addr
 }
 
+// ProxyAddrForTask returns the recording proxy URL carrying a private task
+// identity and installs the task's effective policy before the first request.
+func (t *Traffic) ProxyAddrForTask(taskID int64, policy db.EngagementPolicy) string {
+	if taskID <= 0 {
+		return t.ProxyAddr()
+	}
+	policy, err := db.NormalizeEngagementPolicy(policy)
+	if err != nil {
+		policy = db.DefaultEngagementPolicy()
+	}
+	t.policyMu.Lock()
+	t.policies[taskID] = policy
+	t.policyMu.Unlock()
+	u, err := url.Parse(t.ProxyAddr())
+	if err != nil {
+		return t.ProxyAddr()
+	}
+	u.User = url.User("task-" + strconv.FormatInt(taskID, 10))
+	return u.String()
+}
+
+func proxyTaskID(header string) (int64, bool) {
+	parts := strings.Fields(header)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "basic") {
+		return 0, false
+	}
+	raw, err := base64.StdEncoding.DecodeString(parts[1])
+	if err != nil {
+		return 0, false
+	}
+	user := strings.TrimSuffix(string(raw), ":")
+	if !strings.HasPrefix(user, "task-") {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(strings.TrimPrefix(user, "task-"), 10, 64)
+	return id, err == nil && id > 0
+}
+
 // SetUpstreamProxy points every captured request at a global egress proxy
 // (http/https/socks5, optional user:pass in the URL). An empty raw string clears
 // it, restoring direct dialing. The change is atomic and takes effect on the next
@@ -410,18 +480,192 @@ type sink struct {
 	t *Traffic
 }
 
+func (s *sink) ClientDisconnected(client *mproxy.ClientConn) {
+	if client == nil || client.Conn == nil {
+		return
+	}
+	s.t.policyMu.Lock()
+	delete(s.t.proxyClients, client.Conn.RemoteAddr().String())
+	s.t.policyMu.Unlock()
+}
+
+const browserUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+func (s *sink) Requestheaders(f *mproxy.Flow) {
+	if f == nil || f.Request == nil || f.ConnContext == nil || f.ConnContext.ClientConn == nil {
+		return
+	}
+	// CONNECT establishes the HTTPS tunnel; count and shape the HTTP request
+	// inside it, not the tunnel handshake itself.
+	if strings.EqualFold(f.Request.Method, http.MethodConnect) {
+		return
+	}
+	remote := f.ConnContext.ClientConn.Conn.RemoteAddr().String()
+	host := f.Request.URL.Host
+	if host == "" {
+		host = f.Request.Header.Get("Host")
+	}
+	taskID, policy, ok := s.t.requestPolicy(remote)
+	if !ok {
+		return
+	}
+	if policy.UserAgentMode == "fixed" {
+		f.Request.Header.Set("User-Agent", policy.UserAgent)
+	}
+	if policy.UserAgentMode == "browser" {
+		f.Request.Header.Set("User-Agent", browserUserAgent)
+	}
+	key := strconv.FormatInt(taskID, 10) + "|" + host
+	taskKey := strconv.FormatInt(taskID, 10) + "|*"
+	waited := time.Duration(0)
+	for {
+		delay, allowed := s.t.reserveRequest(taskKey, key, policy)
+		if !allowed {
+			f.Response = &mproxy.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Content-Type": []string{"text/plain"}}, Body: []byte("blocked by Elenxa engagement policy: HTTP request limit reached\n")}
+			s.t.policyEvent(taskID, "http_block", "HTTP request limit reached for "+host)
+			return
+		}
+		if delay <= 0 {
+			break
+		}
+		time.Sleep(delay)
+		waited += delay
+	}
+	if waited > 0 {
+		s.t.policyEvent(taskID, "http_delay", fmt.Sprintf("delayed %s for %s", waited.Round(time.Millisecond), host))
+	}
+	s.t.policyMu.Lock()
+	s.t.flowSlots[f.Id.String()] = key
+	s.t.policyMu.Unlock()
+}
+
+func (t *Traffic) requestPolicy(remote string) (int64, db.EngagementPolicy, bool) {
+	t.policyMu.Lock()
+	defer t.policyMu.Unlock()
+	id := t.proxyClients[remote]
+	p, ok := t.policies[id]
+	return id, p, ok
+}
+
+func (t *Traffic) reserveRequest(taskKey, hostKey string, p db.EngagementPolicy) (time.Duration, bool) {
+	t.policyMu.Lock()
+	defer t.policyMu.Unlock()
+	now := time.Now()
+	taskState := t.policyState[taskKey]
+	if taskState == nil {
+		taskState = &policyRuntime{}
+		t.policyState[taskKey] = taskState
+	}
+	state := t.policyState[hostKey]
+	if state == nil {
+		state = &policyRuntime{tokens: float64(p.HTTPBurst), lastRefill: now}
+		t.policyState[hostKey] = state
+	}
+	if p.HTTPMaxRequests > 0 && taskState.requests >= p.HTTPMaxRequests {
+		return 0, false
+	}
+	if p.HTTPMaxConcurrentPerHost > 0 && state.inFlight >= p.HTTPMaxConcurrentPerHost {
+		return 25 * time.Millisecond, true
+	}
+	delay := time.Duration(0)
+	if p.HTTPMinDelayMS > 0 && !state.lastRequest.IsZero() {
+		if d := time.Duration(p.HTTPMinDelayMS)*time.Millisecond - now.Sub(state.lastRequest); d > delay {
+			delay = d
+		}
+	}
+	if p.HTTPRequestsPerSecond > 0 {
+		elapsed := now.Sub(state.lastRefill).Seconds()
+		state.tokens += elapsed * p.HTTPRequestsPerSecond
+		if state.tokens > float64(p.HTTPBurst) {
+			state.tokens = float64(p.HTTPBurst)
+		}
+		state.lastRefill = now
+		if state.tokens < 1 {
+			if d := time.Duration((1 - state.tokens) / p.HTTPRequestsPerSecond * float64(time.Second)); d > delay {
+				delay = d
+			}
+		}
+	}
+	if delay > 0 {
+		return delay, true
+	}
+	if p.HTTPRequestsPerSecond > 0 {
+		state.tokens--
+	}
+	state.inFlight++
+	state.requests++
+	taskState.requests++
+	state.lastRequest = now
+	return 0, true
+}
+
+func (t *Traffic) releaseFlow(f *mproxy.Flow) {
+	if f == nil {
+		return
+	}
+	t.policyMu.Lock()
+	defer t.policyMu.Unlock()
+	key := t.flowSlots[f.Id.String()]
+	delete(t.flowSlots, f.Id.String())
+	if state := t.policyState[key]; state != nil && state.inFlight > 0 {
+		state.inFlight--
+	}
+}
+
+func (t *Traffic) policyEvent(taskID int64, action, detail string) {
+	log.Printf("[engagement] task=%d action=%s %s", taskID, action, detail)
+	_, _ = t.db.Exec(`INSERT INTO policy_events(ts, task_id, action, detail) VALUES (?,?,?,?)`, time.Now().Unix(), taskID, action, detail)
+}
+
+// RecordPolicyEvent persists a non-HTTP policy decision, such as scanner-tool
+// middleware rejecting an unbounded command, in the same audit stream.
+func (t *Traffic) RecordPolicyEvent(taskID int64, action, detail string) {
+	t.policyEvent(taskID, action, detail)
+}
+
+type PolicyEvent struct {
+	Timestamp int64  `json:"timestamp"`
+	Action    string `json:"action"`
+	Detail    string `json:"detail"`
+}
+
+func (t *Traffic) PolicyEvents(taskID int64) ([]PolicyEvent, error) {
+	rows, err := t.db.Query(`SELECT ts, action, detail FROM policy_events WHERE task_id=? ORDER BY id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PolicyEvent{}
+	for rows.Next() {
+		var event PolicyEvent
+		if err := rows.Scan(&event.Timestamp, &event.Action, &event.Detail); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
 func (s *sink) Response(f *mproxy.Flow) {
+	defer s.t.releaseFlow(f)
 	if f.Request == nil || f.Response == nil {
 		return
 	}
 	s.t.record(f)
 }
 
+// Responseheaders releases the concurrency slot even for streamed/SSE bodies,
+// which do not necessarily reach the buffered Response callback promptly.
+func (s *sink) Responseheaders(f *mproxy.Flow) { s.t.releaseFlow(f) }
+
 // RequestError fires when a request through an established MITM tunnel fails. If
 // the failure looks proxy/protocol-caused (h2 quirks, HEAD-with-body, protocol
 // errors) — not a plain target-unreachable error — we flag the host for
 // transparent passthrough so future requests to it succeed instead of dying.
-func (s *sink) RequestError(f *mproxy.Flow, err error) { s.t.maybePassthrough(f, err) }
+func (s *sink) RequestError(f *mproxy.Flow, err error) {
+	s.t.releaseFlow(f)
+	s.t.maybePassthrough(f, err)
+}
 
 // maybePassthrough marks a host to be tunneled transparently on the next
 // connection, but only for errors the proxy itself caused — a target that is

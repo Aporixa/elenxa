@@ -72,7 +72,7 @@ func TestConfigStores(t *testing.T) {
 	defer d.Close()
 
 	// LLM profile: save, active, key never serialized
-	pid, err := d.SaveProfile(&LLMProfile{Name: "t-default", Format: "openai", Model: "gpt-x", APIKey: "secret123"})
+	pid, err := d.SaveProfile(&LLMProfile{Name: "t-default", Format: "openai", Model: "gpt-x", APIKey: "secret123", TokensPerMinute: 12345})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestConfigStores(t *testing.T) {
 		t.Fatalf("deleting active profile error=%v, want %v", err, ErrActiveLLMProfileDelete)
 	}
 	act, err := d.ActiveProfile()
-	if err != nil || act == nil || act.APIKey != "secret123" {
+	if err != nil || act == nil || act.APIKey != "secret123" || act.TokensPerMinute != 12345 {
 		t.Fatalf("active profile/key: %+v err=%v", act, err)
 	}
 	// list must hide the key, expose hint

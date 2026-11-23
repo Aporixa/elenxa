@@ -31,6 +31,7 @@ import { api } from "@/lib/api";
 import type {
   AssetInterceptKind,
   AssetInterceptRule,
+  EngagementPolicy,
   Finding,
   ModelTokenStat,
   Stats,
@@ -700,6 +701,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
           )}
         </CardContent>
       </Card>
+      <EngagementPolicyCard taskId={taskId} />
       <TaskInterceptRulesCard taskId={taskId} />
       {coverage && coverage.enabled && coverage.scope_rows > 0 && (
         <Card>
@@ -1047,6 +1049,85 @@ export function OverviewTab({ taskId }: { taskId: string }) {
         <StatCard label="Total intents" value={intents.length} icon={AlertTriangleIcon} sub="All intents in this task" />
       </div>
     </div>
+  );
+}
+
+function EngagementPolicyCard({ taskId }: { taskId: string }) {
+  const [policy, setPolicy] = React.useState<EngagementPolicy>({ profile: "lab", user_agent_mode: "preserve" });
+  const [busy, setBusy] = React.useState(false);
+  const [message, setMessage] = React.useState("");
+
+  React.useEffect(() => {
+    api.task(taskId).then((task) => setPolicy(task.engagement_policy ?? { profile: "lab", user_agent_mode: "preserve" })).catch(() => setMessage("Could not load traffic policy"));
+  }, [taskId]);
+
+  function numberField(key: keyof EngagementPolicy, label: string) {
+    return (
+      <label className="grid gap-1 text-xs" key={key}>
+        {label}
+        <Input type="number" min={0} value={String(policy[key] ?? 0)} onChange={(e) => setPolicy((p) => ({ ...p, [key]: Math.max(0, Number(e.target.value) || 0) }))} />
+      </label>
+    );
+  }
+
+  async function save() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const updated = await api.updateTask(taskId, { engagement_policy: policy });
+      setPolicy(updated.engagement_policy ?? policy);
+      setMessage("Saved. New agent sessions use this policy immediately.");
+    } catch (error) {
+      setMessage(`Save failed: ${(error as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Engagement traffic policy</CardTitle>
+        <CardDescription>Control HTTP noise, scanner fan-out, and the User-Agent for this task. HTTP and User-Agent enforcement require traffic capture; scanner bounds apply through shell-tool middleware.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="grid gap-1 text-xs">
+            Profile
+            <NativeSelect value={policy.profile} onChange={(e) => setPolicy((p) => ({ ...p, profile: e.target.value as EngagementPolicy["profile"] }))}>
+              <NativeSelectOption value="lab">Lab — unrestricted</NativeSelectOption>
+              <NativeSelectOption value="balanced">Balanced — bounded</NativeSelectOption>
+              <NativeSelectOption value="quiet">Quiet — low noise</NativeSelectOption>
+              <NativeSelectOption value="custom">Custom</NativeSelectOption>
+            </NativeSelect>
+          </label>
+          <label className="grid gap-1 text-xs">
+            User-Agent
+            <NativeSelect value={policy.user_agent_mode} onChange={(e) => setPolicy((p) => ({ ...p, user_agent_mode: e.target.value as EngagementPolicy["user_agent_mode"] }))}>
+              <NativeSelectOption value="preserve">Preserve tool UA</NativeSelectOption>
+              <NativeSelectOption value="browser">Normal browser UA</NativeSelectOption>
+              <NativeSelectOption value="fixed">Fixed custom UA</NativeSelectOption>
+            </NativeSelect>
+          </label>
+        </div>
+        {policy.user_agent_mode === "fixed" && <Input value={policy.user_agent ?? ""} maxLength={512} placeholder="Custom User-Agent" onChange={(e) => setPolicy((p) => ({ ...p, user_agent: e.target.value }))} />}
+        {policy.profile === "custom" && (
+          <div className="grid gap-3 sm:grid-cols-3">
+            {numberField("http_requests_per_second", "HTTP requests/sec")}
+            {numberField("http_burst", "HTTP burst")}
+            {numberField("http_max_concurrent_per_host", "HTTP concurrency/host")}
+            {numberField("http_max_requests", "Total HTTP requests")}
+            {numberField("http_min_delay_ms", "Minimum HTTP delay (ms)")}
+            {numberField("scanner_max_rate", "Scanner requests/sec")}
+            {numberField("scanner_max_concurrency", "Scanner concurrency")}
+          </div>
+        )}
+        <div className="flex items-center gap-3">
+          <Button size="sm" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save traffic policy"}</Button>
+          {message && <span className="text-muted-foreground text-xs">{message}</span>}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

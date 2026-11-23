@@ -42,6 +42,10 @@ type Config struct {
 	// using the provider (0 = that window unlimited).
 	RatePerSecond float64
 	RatePerMinute float64
+	// TokensPerMinute caps estimated serialized input tokens shared across all
+	// agents using this provider (0 = unlimited). Configure below the vendor's
+	// published TPM ceiling to leave room for output and tokenizer variance.
+	TokensPerMinute float64
 	// ContextWindowK is the model's context window in K tokens (user-configured),
 	// used to size compaction thresholds. 0 = default; see CompactionWindow.
 	ContextWindowK int
@@ -277,8 +281,8 @@ func (c Config) NewProvider() (llm.Provider, error) {
 	lc.RetryInterval = c.Retry.ConnectInterval
 	lc.EmptyResponseRetries = c.Retry.EmptyAttempts
 	lc.EmptyResponseInterval = c.Retry.EmptyInterval
-	if c.RatePerSecond > 0 || c.RatePerMinute > 0 {
-		lc.RateLimit = &llm.RateLimit{PerSecond: c.RatePerSecond, PerMinute: c.RatePerMinute}
+	if c.RatePerSecond > 0 || c.RatePerMinute > 0 || c.TokensPerMinute > 0 {
+		lc.RateLimit = &llm.RateLimit{PerSecond: c.RatePerSecond, PerMinute: c.RatePerMinute, TokensPerMinute: c.TokensPerMinute}
 	}
 	return llm.NewProvider(lc)
 }

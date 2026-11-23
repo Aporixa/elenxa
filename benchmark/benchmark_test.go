@@ -70,6 +70,35 @@ func TestLoadScenarioRejectsUnknownField(t *testing.T) {
 	}
 }
 
+func TestEvaluateJSONCountOracle(t *testing.T) {
+	atLeast := 2
+	count, err := evaluateJSONCount([]byte(`{"data":[{"solved":true},{"solved":false},{"solved":true}]}`), JSONCountSpec{
+		Path: "data", Match: map[string]any{"solved": true}, AtLeast: &atLeast,
+	})
+	if err != nil || count != 2 {
+		t.Fatalf("evaluateJSONCount() = %d, %v; want 2, nil", count, err)
+	}
+	exact := 3
+	count, err = evaluateJSONCount([]byte(`{"data":[{"solved":true},{"solved":true}]}`), JSONCountSpec{
+		Path: "data", Match: map[string]any{"solved": true}, Exact: &exact,
+	})
+	if err == nil || count != 2 || !strings.Contains(err.Error(), "want exactly 3") {
+		t.Fatalf("evaluateJSONCount() = %d, %v; want exact-count failure", count, err)
+	}
+}
+
+func TestValidateJSONCountRequiresOneThreshold(t *testing.T) {
+	scenario := Scenario{
+		SchemaVersion: SchemaVersion, ID: "json-count",
+		Elenxa: ElenxaSpec{BaseURL: "http://elenxa.test"},
+		Task:   TaskSpec{Description: "test", Goal: "test", Scope: []ScopeSpec{{Kind: "ip", Value: "127.0.0.1"}}},
+		Oracle: OracleSpec{Type: "http", URL: "http://lab.test/api/state", JSONCount: &JSONCountSpec{}},
+	}
+	if err := ValidateScenario(scenario); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("ValidateScenario() error = %v, want threshold validation", err)
+	}
+}
+
 func TestRunnerUsesOracleMetricsAndEgress(t *testing.T) {
 	var server *httptest.Server
 	var taskCreatedAt time.Time

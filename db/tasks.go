@@ -49,7 +49,8 @@ type Task struct {
 	// task_scope is not accumulated automatically (source=auto), the agent is not given add_task_scope/
 	// list_untested_assets, and no coverage block is injected into the situation (the scope field is still kept). Company association
 	// (task_scope kind=company) is independent of this switch and never affected. See db/task_scope.go.
-	CoverageEnabled bool `json:"coverage_enabled"`
+	CoverageEnabled  bool             `json:"coverage_enabled"`
+	EngagementPolicy EngagementPolicy `json:"engagement_policy"`
 }
 
 // TaskDeleteResult reports optional related-data cleanup performed in the same
@@ -155,7 +156,8 @@ type TaskCreateOptions struct {
 	// paths that do not care about this switch (orchestration spawn, old API) keep the original behavior. Only web task creation may pass false explicitly to turn it off.
 	CoverageEnabled *bool
 	// InterceptRules are the task-level asset intercept rules, written to task_intercept_rules in the same transaction when the task is created.
-	InterceptRules []TaskInterceptRuleInput
+	InterceptRules   []TaskInterceptRuleInput
+	EngagementPolicy EngagementPolicy
 }
 
 // CreateTaskWithOptions creates an exploration, task, direct source relations,
@@ -198,6 +200,14 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 	}
 	opts.PlanHeartbeatSeconds = normalizeHeartbeat(opts.PlanHeartbeatSeconds)
 	coverageEnabled := opts.CoverageEnabled == nil || *opts.CoverageEnabled
+	engagementPolicy, err := NormalizeEngagementPolicy(opts.EngagementPolicy)
+	if err != nil {
+		return nil, err
+	}
+	engagementJSON, err := json.Marshal(engagementPolicy)
+	if err != nil {
+		return nil, err
+	}
 	var categoryName string
 	if opts.CategoryID != nil {
 		if *opts.CategoryID <= 0 {
@@ -223,12 +233,13 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 		SourceTaskIDs:  append([]int64(nil), opts.SourceTaskIDs...),
 		CompanyIDs:     append([]int64(nil), opts.CompanyIDs...),
 		TimeoutSeconds: opts.TimeoutSeconds, PlanHeartbeatSeconds: opts.PlanHeartbeatSeconds,
-		CoverageEnabled: coverageEnabled,
+		CoverageEnabled:  coverageEnabled,
+		EngagementPolicy: engagementPolicy,
 	}
 	if err := tx.QueryRow(`
-INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, coverage_enabled)
-VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9)
-RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
+INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, coverage_enabled, engagement_policy)
+VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10)
+RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled, engagementJSON).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	if err := insertTaskRelations(tx, t.ID, opts.SourceTaskIDs); err != nil {
@@ -344,13 +355,18 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 
 const taskCols = `id, COALESCE(name,''), category_id,
 COALESCE((SELECT category.name FROM task_categories category WHERE category.id=tasks.category_id),''),
-description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at`
+description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), COALESCE(engagement_policy,'{}'::jsonb), first_run_at, deadline_at`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
-	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt); err != nil {
+	var engagementJSON []byte
+	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &engagementJSON, &t.FirstRunAt, &t.DeadlineAt); err != nil {
 		return nil, err
 	}
+	if err := json.Unmarshal(engagementJSON, &t.EngagementPolicy); err != nil {
+		return nil, err
+	}
+	t.EngagementPolicy, _ = NormalizeEngagementPolicy(t.EngagementPolicy)
 	t.Pinned = t.PinnedAt != nil
 	return &t, nil
 }
@@ -390,22 +406,35 @@ ORDER BY (pinned_at IS NOT NULL) DESC, pinned_at DESC NULLS LAST, id DESC`)
 
 // TaskPatch updates task list metadata without changing execution state.
 type TaskPatch struct {
-	Name   *string
-	Pinned *bool
+	Name             *string
+	Pinned           *bool
+	EngagementPolicy *EngagementPolicy
 }
 
 // UpdateTask applies a partial task name/pin mutation and returns the updated row.
 // Re-pinning an already pinned task preserves its original position.
 func (d *DB) UpdateTask(id int64, patch TaskPatch) (*Task, error) {
+	var policyJSON []byte
+	if patch.EngagementPolicy != nil {
+		policy, err := NormalizeEngagementPolicy(*patch.EngagementPolicy)
+		if err != nil {
+			return nil, err
+		}
+		policyJSON, err = json.Marshal(policy)
+		if err != nil {
+			return nil, err
+		}
+	}
 	task, err := scanTask(d.QueryRow(`UPDATE tasks SET
 	name = CASE WHEN $2::boolean THEN $3 ELSE name END,
 	pinned_at = CASE
 		WHEN $4::boolean IS NULL THEN pinned_at
 		WHEN $4::boolean THEN COALESCE(pinned_at, now())
 		ELSE NULL
-	END
+	END,
+	engagement_policy = CASE WHEN $5::boolean THEN $6::jsonb ELSE engagement_policy END
 WHERE id=$1 AND deleted_at IS NULL
-RETURNING `+taskCols, id, patch.Name != nil, patch.Name, patch.Pinned))
+RETURNING `+taskCols, id, patch.Name != nil, patch.Name, patch.Pinned, patch.EngagementPolicy != nil, policyJSON))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

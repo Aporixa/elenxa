@@ -41,6 +41,8 @@ type Planner struct {
 	maxTokensFn       func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 	compactor         *Compactor                             // cold-node compaction (§7); nil = disabled
 	hooks             harness.HookRunner                     // per-task guard hooks (intercept rules); nil = none
+	engagementPolicy  db.EngagementPolicy
+	policyEvent       func(action, detail string)
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -97,6 +99,9 @@ func (p *Planner) compactionWindow() int {
 // SetProxy points the planner's WebFetch at the recording proxy plus the CA cert
 // it trusts to verify HTTPS through it (empty addr = direct).
 func (p *Planner) SetProxy(addr, caCert string) { p.proxyAddr, p.proxyCACert = addr, caCert }
+func (p *Planner) SetEngagementPolicy(v db.EngagementPolicy, event func(string, string)) {
+	p.engagementPolicy, p.policyEvent = v, event
+}
 
 // SetWebSearch selects the web_search backend for the planner (off by default).
 func (p *Planner) SetWebSearch(o WebSearchOpts) { p.webSearch = o }
@@ -307,6 +312,7 @@ Task goal: {{.Goal}}
 
 **How many intents to produce this round (think this through first)**:
 - **Hard floor (highest priority)**: as long as [the goal is not met] and [there are currently no open or running intents] (frontier_open=0 and running_intents is empty), this round [must] produce at least one intent that advances toward the goal: with no running work to wait on and no queued direction, producing 0 intents = the task stalls; even if all known directions are only in recent_done, open a new one or re-dispatch one based on the done/exhausted/blocked judgment below.
+- **Parallelism floor**: when the goal remains open and fewer than two independent intents are open/running, actively look for another materially different, non-dependent direction and dispatch it when one exists. One active intent is not a reason to leave the rest of the worker pool idle. Waiting is valid only when every plausible next direction genuinely depends on that active intent's output; a CAPTCHA test, an account-lifecycle test, an upload parser test, and an unrelated endpoint family do not duplicate each other merely because they share the same site.
 - Outside the hard floor, **producing 0 intents is a normal result, but it needs a legitimate reason** (not a "dispatching fewer is safer" default): ① **already covered**: every direction you thought of is already being handled by intents that are still open/running (regenerating an existing intent with different wording is a serious error); ② **waiting on a dependency**: the next step depends on output from currently running work, and it isn't out yet (forcing a dispatch now leaves downstream without its prerequisite and spinning idle; wait until the next wake-up when the graph is updated).
 - Conversely: if there truly is a new direction that is [uncovered and does not depend on running work], or the goal is not met and untested surface remains in scope, you should dispatch; don't treat 0 intents as a lazy default.
 
@@ -320,6 +326,7 @@ Task goal: {{.Goal}}
 
 2. **Judge the goals (core duty)**: the goals field already contains the goals and their status; for an unmet goal already proven by some finding/fact, call prove_goal(goal_id, evidence_id, reason) to mark it met. **When the goal you mark is exactly the last unfinished goal, the system automatically judges the whole task complete**: wrap-up is driven only by prove_goal one goal at a time; there is no other "one-click complete" mechanism.
    - ⚠️ **Quantitative acceptance check (never stamp approval early)**: when a goal contains a quantifiable condition (coverage reaches X%, capture N flags, obtain a certain privilege), before prove_goal you [must] check the measured values in the graph_overview above (coverage.pct, findings_total count, etc.): if not met, prove_goal is [forbidden]; dispatch intents to close the gap instead; do not mark met early on the grounds of "mostly achieved/the core is done". Example: 100% coverage is required and measured coverage.pct=40% → not met, keep dispatching supplementary testing intents.
+   - ⚠️ **Open-ended timed goals are not early-completable**: phrases such as "as many as possible", "maximize findings", or "for the full duration" define an optimization objective whose stopping condition is the task budget. "No uncovered direction I currently know" is not evidence that such a goal is met. Keep independent capacity productively occupied; the host will reject an early prove_goal and the deadline coordinator will request the final judgment when time expires.
 
 3. **(Optional, opening only, extremely lightweight) probe for understanding**: only when the graph has almost no facts yet (recent_facts basically empty, task just started) and the situation alone isn't enough to make the initial intents concrete, use Bash etc. to do a very small amount of read-only probing of the target (e.g. 1–2 curl calls to look at the home page/fingerprint). **The only legitimate output is a more precise intent description**: never discovery/verification/exploitation of vulnerabilities, nor enumeration results of endpoints/directories/parameters (those are the worker's job; write them as intents and dispatch them). Three hard boundaries:
    - The graph already has facts produced by workers (facts>0 / recent_facts non-empty) → probing yourself again is [forbidden]; base all judgments on existing facts, and this round's output can only be "dispatch new intents" or "end"; want to dig into a lead → dispatch an intent for a worker to check it, don't curl it yourself.
@@ -370,6 +377,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		tsx.SetAssetStore(as, as.Companies())
 	}
 	tsx.SetTaskID(taskID)
+	tsx.SetCompletionGoal(goal)
 	tsx.SetCoverageEnabled(as == nil || as.CoverageEnabled(taskID))
 	tsx.killWork = p.killWork   // enable kill_work tool (nil = unavailable)
 	tsx.steerWork = p.steerWork // enable steer_work tool (nil = unavailable)
@@ -382,6 +390,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
 	tools, def, cleanup := AugmentTools(ctx, "planner", base)
 	defer cleanup()
+	tools = applyEngagementPolicy(tools, p.engagementPolicy, p.policyEvent)
 	// The key situation (just-finished intents + the prefetched full graph) now goes into [this
 	// round's user input] (see input below); system keeps only the static planning body. Moving it
 	// out keeps system stable each round and cache-friendlier; the cost is that if a single round
@@ -400,6 +409,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	taskDir := ensureRunDir(p.workDir, taskID, 0)
 	ctx = intercept.WithReviewContext(ctx, taskDir, intercept.ReviewBackground{})
 	sysBody := plannerSystem(goal, p.workDir, taskDir)
+	sysBody += engagementPrompt(p.engagementPolicy)
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // inject operational constraints (if any) into the system prompt to bound exploration
 	}

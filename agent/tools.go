@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Aporixa/elenxa/db"
 	acperm "github.com/Autumn-27/norma/permission"
@@ -57,6 +58,10 @@ type ToolSet struct {
 	ts              *db.ExplorationStore
 	worker          string
 	taskID          int64 // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
+	// completionGoal is the operator's full task goal. The planner supplies it so
+	// prove_goal can enforce deterministic completion semantics for timed,
+	// open-ended optimization goals (for example, "find as many as possible").
+	completionGoal string
 	// coverageDisabled mirrors tasks.coverage_enabled=false. Stored inverted so the
 	// zero value (all existing ToolSet constructions) means ENABLED — matching the
 	// DB default (true). When true: graphOverviewData drops the coverage block, the
@@ -167,6 +172,10 @@ func NewToolSet(ts *db.ExplorationStore, worker string) *ToolSet {
 // SetTaskID sets the PG task id on this ToolSet so that report_finding can
 // dual-write to the standalone findings table (which survives task deletion).
 func (t *ToolSet) SetTaskID(id int64) { t.taskID = id }
+
+// SetCompletionGoal supplies the operator-authored task goal used by the
+// prove_goal completion guard. Workers never own task completion.
+func (t *ToolSet) SetCompletionGoal(goal string) { t.completionGoal = goal }
 
 // SetCoverageEnabled records whether this task has the asset-coverage feature on
 // (default enabled). Passing false makes graphOverviewData omit the coverage block
@@ -1277,7 +1286,7 @@ func (t *ToolSet) proveGoal() actool.CoreTool {
 			"evidence_id": idp("Id of the finding/fact node that proves it"),
 			"reason":      str("Why this evidence satisfies the goal"),
 		}, "goal_id", "evidence_id"),
-		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
 				GoalID     json.RawMessage `json:"goal_id"`
 				EvidenceID json.RawMessage `json:"evidence_id"`
@@ -1287,6 +1296,9 @@ func (t *ToolSet) proveGoal() actool.CoreTool {
 			goal, ev := pid(a.GoalID), pid(a.EvidenceID)
 			if goal == 0 || ev == 0 {
 				return actool.Errorf("goal_id and evidence_id are required"), nil
+			}
+			if blocked, reason := completionBlockedUntilBudget(t.completionGoal, taskClockFrom(ctx), time.Now()); blocked {
+				return actool.Errorf(reason), nil
 			}
 			goalNode, err := t.ts.GetNode(goal)
 			if err != nil || goalNode == nil || goalNode.Kind != db.KindGoal {

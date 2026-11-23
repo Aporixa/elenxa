@@ -25,8 +25,9 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxTaskMetadataRequestSize)
 	var request struct {
-		Name   *string `json:"name"`
-		Pinned *bool   `json:"pinned"`
+		Name             *string              `json:"name"`
+		Pinned           *bool                `json:"pinned"`
+		EngagementPolicy *db.EngagementPolicy `json:"engagement_policy"`
 	}
 	if err := decode(r, &request); err != nil {
 		var tooLarge *http.MaxBytesError
@@ -37,8 +38,8 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if request.Name == nil && request.Pinned == nil {
-		writeErr(w, http.StatusBadRequest, "At least one of name or pinned is required")
+	if request.Name == nil && request.Pinned == nil && request.EngagementPolicy == nil {
+		writeErr(w, http.StatusBadRequest, "At least one of name, pinned, or engagement_policy is required")
 		return
 	}
 	if request.Name != nil {
@@ -53,7 +54,15 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 		request.Name = &name
 	}
-	task, err := s.m.UpdateTaskMetadata(taskID, db.TaskPatch{Name: request.Name, Pinned: request.Pinned})
+	if request.EngagementPolicy != nil {
+		policy, err := db.NormalizeEngagementPolicy(*request.EngagementPolicy)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "Invalid engagement policy: "+err.Error())
+			return
+		}
+		request.EngagementPolicy = &policy
+	}
+	task, err := s.m.UpdateTaskMetadata(taskID, db.TaskPatch{Name: request.Name, Pinned: request.Pinned, EngagementPolicy: request.EngagementPolicy})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -61,6 +70,9 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 	if task == nil {
 		writeErr(w, http.StatusNotFound, "task not found")
 		return
+	}
+	if request.EngagementPolicy != nil {
+		s.invalidateTaskAgent(taskID)
 	}
 	writeJSON(w, http.StatusOK, taskDTO(task, s.resolvedTaskStatus(task)))
 }

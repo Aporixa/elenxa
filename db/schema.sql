@@ -370,6 +370,7 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     api_key_hint     TEXT,
     rate_per_second  DOUBLE PRECISION NOT NULL DEFAULT 0,
     rate_per_minute  DOUBLE PRECISION NOT NULL DEFAULT 0,
+    tokens_per_minute DOUBLE PRECISION NOT NULL DEFAULT 0,
     context_window_k INTEGER NOT NULL DEFAULT 0,
     -- Thinking parameters are split into two independent fields: thinking_type = thinking switch (''/disabled/enabled),
     -- reasoning_effort = thinking effort (''/low/medium/high/xhigh/max); they do not affect each other.
@@ -406,6 +407,7 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS tokens_per_minute DOUBLE PRECISION NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_one_default ON llm_profiles(is_default) WHERE is_default;
 DROP TRIGGER IF EXISTS trg_llm_upd ON llm_profiles;
 CREATE TRIGGER trg_llm_upd BEFORE UPDATE ON llm_profiles
@@ -524,6 +526,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     timeout_seconds INTEGER NOT NULL DEFAULT 0,
     plan_heartbeat_seconds INTEGER NOT NULL DEFAULT 300,
     coverage_enabled BOOLEAN NOT NULL DEFAULT true,
+    engagement_policy JSONB NOT NULL DEFAULT '{"profile":"lab","user_agent_mode":"preserve"}'::jsonb,
     pinned_at      TIMESTAMPTZ,
     first_run_at   TIMESTAMPTZ,
     deadline_at    TIMESTAMPTZ,
@@ -546,6 +549,7 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS queued BOOLEAN NOT NULL DEFAULT false
 -- expose add_task_scope/list_untested_assets to the agent; false = all off (see task_scope.go).
 -- Existing tasks default to true to keep the original behavior; company association (task_scope kind=company) is not affected by this switch.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS coverage_enabled BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS engagement_policy JSONB NOT NULL DEFAULT '{"profile":"lab","user_agent_mode":"preserve"}'::jsonb;
 -- queued_at makes admission FIFO reflect the actual enqueue order rather than the
 -- task creation order. queue_mode distinguishes first bootstrap from resuming an
 -- exploration that already owns goals/history.

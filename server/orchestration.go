@@ -515,7 +515,13 @@ func (s *Server) seedOrchestrationTools() {
 // inserts missing rows, so an operator can disable any skill for an ablation or
 // regression run and a restart will not silently turn it back on.
 func (s *Server) seedResearchSkillVisibility() {
-	skills := []string{"adversarial-environment", "ai-target-research", "lab-operations"}
+	skills := []string{
+		"adversarial-environment", "ai-target-research", "lab-operations",
+		"web-surface-mapping", "auth-session-testing", "authorization-testing",
+		"injection-testing", "file-path-testing", "api-protocol-testing",
+		"business-logic-testing", "client-browser-testing",
+		"network-service-enumeration", "evidence-verification",
+	}
 	for _, agentKey := range []string{"worker", "mainagent", "planner"} {
 		if err := s.m.pg.SeedAgentSkillVisibility(agentKey, skills); err != nil {
 			log.Printf("[skills] failed to seed research skills for %s: %v", agentKey, err)
@@ -664,7 +670,7 @@ func (s *Server) reseedMainAgentPrompt() {
 // Guarded by a settings flag → runs once. Fresh DBs need nothing (SeedPromptIfEmpty already seeds the latest default). Fully isomorphic to
 // reseedGoalsPrompt.
 func (s *Server) reseedPlannerPrompt() {
-	const flag = "planner_prompt_compact_realistic_v2"
+	const flag = "planner_prompt_budget_parallelism_v3"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -685,7 +691,7 @@ func (s *Server) reseedPlannerPrompt() {
 		log.Printf("[prompts] failed to refresh planner prompt to new default: %v", err)
 		return
 	}
-	log.Printf("[prompts] appended new default version of planner prompt (trimmed/restructured + restraint downgraded to dedup + depth first + negative-review upper bound, one-time)")
+	log.Printf("[prompts] appended new default version of planner prompt (budget-bound completion + independent-route parallelism floor, one-time)")
 }
 
 // reseedWorkerPrompt refreshes the worker prompt to the [current code default] - the default body's record_fact section dropped the whole sentence "for negative conclusions

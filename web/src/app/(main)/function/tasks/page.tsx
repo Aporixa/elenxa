@@ -127,6 +127,7 @@ import type {
   Company,
   DeleteTaskOptions,
   DeleteTaskResult,
+  EngagementPolicy,
   LLMProfile,
   Task,
   TaskArchive,
@@ -3088,6 +3089,15 @@ function CreateTaskSheet({
   const [heartbeatMin, setHeartbeatMin] = React.useState("10"); // planner heartbeat (minutes); default 10, minimum 10 (matches backend)
   const [seedFirstIntent, setSeedFirstIntent] = React.useState(false); // dispatch a seed intent on creation so workers start without waiting for the first planner round; off by default (standard plan-then-execute)
   const [coverageEnabled, setCoverageEnabled] = React.useState(true); // asset coverage feature; on by default. Off = no coverage computed/shown, no scope accumulation, scope tools hidden (company links unaffected)
+  const [engagementProfile, setEngagementProfile] = React.useState<EngagementPolicy["profile"]>("lab");
+  const [userAgentMode, setUserAgentMode] = React.useState<EngagementPolicy["user_agent_mode"]>("preserve");
+  const [userAgent, setUserAgent] = React.useState("");
+  const [httpRPS, setHTTPRPS] = React.useState("10");
+  const [httpBurst, setHTTPBurst] = React.useState("20");
+  const [httpConcurrency, setHTTPConcurrency] = React.useState("8");
+  const [httpMaxRequests, setHTTPMaxRequests] = React.useState("0");
+  const [scannerRate, setScannerRate] = React.useState("50");
+  const [scannerConcurrency, setScannerConcurrency] = React.useState("20");
   const [interceptRules, setInterceptRules] = React.useState<AssetInterceptRuleInput[]>([]); // task-level asset intercept rules (this task only, not written to the global table)
   // Option 1, file upload: before the task is created, stage files under drafts/<draftId>/uploads/ and append the returned absolute paths to the description.
   const [uploading, setUploading] = React.useState(false);
@@ -3155,6 +3165,21 @@ function CreateTaskSheet({
         seedFirstIntent,
         planHeartbeatSeconds: heartbeatSec,
         coverageEnabled,
+        engagementPolicy: {
+          profile: engagementProfile,
+          user_agent_mode: userAgentMode,
+          user_agent: userAgentMode === "fixed" ? userAgent.trim() : undefined,
+          ...(engagementProfile === "custom"
+            ? {
+                http_requests_per_second: Math.max(0, Number(httpRPS) || 0),
+                http_burst: Math.max(0, Math.floor(Number(httpBurst) || 0)),
+                http_max_concurrent_per_host: Math.max(0, Math.floor(Number(httpConcurrency) || 0)),
+                http_max_requests: Math.max(0, Math.floor(Number(httpMaxRequests) || 0)),
+                scanner_max_rate: Math.max(0, Math.floor(Number(scannerRate) || 0)),
+                scanner_max_concurrency: Math.max(0, Math.floor(Number(scannerConcurrency) || 0)),
+              }
+            : {}),
+        },
         interceptRules: interceptRules
           .map((r) => ({ ...r, pattern: r.pattern.trim() }))
           .filter((r) => r.pattern !== ""),
@@ -3172,6 +3197,9 @@ function CreateTaskSheet({
       setHeartbeatMin("10");
       setSeedFirstIntent(false);
       setCoverageEnabled(true);
+      setEngagementProfile("lab");
+      setUserAgentMode("preserve");
+      setUserAgent("");
       setInterceptRules([]);
       setUploadCount(0);
       draftIdRef.current = "";
@@ -3336,9 +3364,51 @@ function CreateTaskSheet({
               <CollapsibleTrigger className="group flex w-full items-center gap-2 border-t pt-4 text-sm font-medium">
                 <ChevronRightIcon className="text-muted-foreground size-4 transition-transform group-data-[state=open]:rotate-90" />
                 Advanced settings
-                <span className="text-muted-foreground ml-auto text-xs font-normal">Timeout · Heartbeat · First intent</span>
+                <span className="text-muted-foreground ml-auto text-xs font-normal">Traffic · UA · Timeout · Heartbeat</span>
               </CollapsibleTrigger>
               <CollapsibleContent className="grid gap-5 pt-5">
+                <div className="grid gap-2">
+                  <Label htmlFor="engagement-profile">Engagement traffic profile</Label>
+                  <Select value={engagementProfile} onValueChange={(v) => setEngagementProfile(v as EngagementPolicy["profile"])}>
+                    <SelectTrigger id="engagement-profile" className="w-56"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="lab">Lab — unrestricted</SelectItem>
+                      <SelectItem value="balanced">Balanced — bounded</SelectItem>
+                      <SelectItem value="quiet">Quiet — low noise</SelectItem>
+                      <SelectItem value="custom">Custom</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-muted-foreground text-xs">Recognized scanner limits are always enforced. HTTP rate, concurrency, request-cap, and User-Agent controls are enforced by the recording proxy when traffic capture is enabled. Lab preserves current CTF behavior; zero custom limits mean unlimited.</p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="user-agent-mode">User-Agent policy</Label>
+                  <Select value={userAgentMode} onValueChange={(v) => setUserAgentMode(v as EngagementPolicy["user_agent_mode"])}>
+                    <SelectTrigger id="user-agent-mode" className="w-56"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="preserve">Preserve tool UA</SelectItem>
+                      <SelectItem value="browser">Normal browser UA</SelectItem>
+                      <SelectItem value="fixed">Fixed custom UA</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {userAgentMode === "fixed" && <Input value={userAgent} onChange={(e) => setUserAgent(e.target.value)} placeholder="Custom User-Agent" maxLength={512} />}
+                </div>
+                {engagementProfile === "custom" && (
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      ["HTTP requests/sec", httpRPS, setHTTPRPS],
+                      ["HTTP burst", httpBurst, setHTTPBurst],
+                      ["HTTP concurrency/host", httpConcurrency, setHTTPConcurrency],
+                      ["Total HTTP requests", httpMaxRequests, setHTTPMaxRequests],
+                      ["Scanner requests/sec", scannerRate, setScannerRate],
+                      ["Scanner concurrency", scannerConcurrency, setScannerConcurrency],
+                    ].map(([label, value, setter]) => (
+                      <div className="grid gap-1" key={label as string}>
+                        <Label>{label as string}</Label>
+                        <Input type="number" min={0} value={value as string} onChange={(e) => (setter as React.Dispatch<React.SetStateAction<string>>)(e.target.value)} />
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="grid gap-2">
                   <Label htmlFor="timeout-min">Task timeout (minutes, optional)</Label>
                   <Input

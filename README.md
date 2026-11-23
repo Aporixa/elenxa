@@ -135,7 +135,7 @@ Upgrading replaces only the program, not the data: the Postgres data volume `pgd
 }
 ```
 
-**LLM**: `export ANTHROPIC_API_KEY=sk-...` (or `OPENAI_API_KEY`), or fill it in on the "LLM configuration" page in the UI.
+**LLM**: `export ANTHROPIC_API_KEY=sk-...` (or `OPENAI_API_KEY`), or fill it in on the "LLM configuration" page in the UI. Each UI profile can set requests per second, requests per minute, and estimated input tokens per minute. These limits are shared by all agents that use the profile.
 Optional: `ELENXA_LLM_PROVIDER` / `ELENXA_LLM_MODEL` / `ELENXA_LLM_BASE_URL` / `ELENXA_LLM_PROXY`.
 
 **Concurrency**: the number of work agents per task is configured in "System settings" (default 3).
@@ -151,13 +151,14 @@ Elenxa includes deterministic research services around the existing planner and 
 - consecutive duplicate-call detection across built-in, custom, MCP, skill and domain tools;
 - transparent attack-path ranking from priority, evidence, scope, estimated cost and prior exact failures;
 - provider-refusal control events and task research metrics at `GET /api/tasks/{id}/research-metrics`;
-- an offline Promptfoo case importer and a full-task benchmark runner with independent lab oracles, egress adapters and deterministic scoring.
+- an offline Promptfoo case importer and a full-task benchmark runner with independent lab oracles, egress adapters, JSON scoreboard counts, and deterministic scoring.
 
 Build and validate the benchmark CLI without contacting a model provider:
 
 ```bash
 go build -o dist/elenxa-bench ./cmd/elenxa-bench
 dist/elenxa-bench validate -scenario benchmark/scenarios/juiceshop-steering.example.json
+dist/elenxa-bench validate -scenario benchmark/scenarios/juiceshop-coverage.example.json
 dist/elenxa-bench import promptfoo \
   -input cases/promptfooconfig.yaml \
   -template benchmark/scenarios/warden-template.json \

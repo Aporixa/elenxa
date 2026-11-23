@@ -19,22 +19,24 @@ import (
 // (→planner) or direct high-priority intents (→frontier). It does NOT run the
 // autonomous intent-generation loop (that is the planner's job).
 type MainAgent struct {
-	findingRecorder FindingRecorder
-	prov            llm.Provider
-	model           string
-	tx              *transcript.Store                      // raw LLM conversation persistence (nil = off)
-	window          int                                    // context window in tokens (for compaction)
-	windowFn        func() int                             // optional dynamic task-chain minimum
-	maxTurns        int                                    // max agent turns per run (0 = unlimited)
-	proxyAddr       string                                 // recording proxy for WebFetch (empty = direct)
-	proxyCACert     string                                 // recording proxy's CA cert path (HTTPS verify)
-	webSearch       WebSearchOpts                          // web_search tool backend selection (off by default)
-	workDir         string                                 // shared work dir (surfaced in prompt as artifact-output target)
-	steerWork       func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
-	nonStreamingFn  func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
-	noaEnabledFn    func() bool                            // resolver: use experimental noa compaction? (nil = off)
-	maxTokensFn     func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
-	hooks           harness.HookRunner                     // per-task guard hooks (intercept rules); nil = none
+	findingRecorder  FindingRecorder
+	prov             llm.Provider
+	model            string
+	tx               *transcript.Store                      // raw LLM conversation persistence (nil = off)
+	window           int                                    // context window in tokens (for compaction)
+	windowFn         func() int                             // optional dynamic task-chain minimum
+	maxTurns         int                                    // max agent turns per run (0 = unlimited)
+	proxyAddr        string                                 // recording proxy for WebFetch (empty = direct)
+	proxyCACert      string                                 // recording proxy's CA cert path (HTTPS verify)
+	webSearch        WebSearchOpts                          // web_search tool backend selection (off by default)
+	workDir          string                                 // shared work dir (surfaced in prompt as artifact-output target)
+	steerWork        func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
+	nonStreamingFn   func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
+	noaEnabledFn     func() bool                            // resolver: use experimental noa compaction? (nil = off)
+	maxTokensFn      func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
+	hooks            harness.HookRunner                     // per-task guard hooks (intercept rules); nil = none
+	engagementPolicy db.EngagementPolicy
+	policyEvent      func(action, detail string)
 }
 
 // SetHooks attaches the per-task guard hooks so every main-agent tool call
@@ -79,6 +81,9 @@ func (m *MainAgent) compactionWindow() int {
 // SetProxy points the main agent's WebFetch at the recording proxy plus the CA
 // cert it trusts to verify HTTPS through it (empty addr = direct).
 func (m *MainAgent) SetProxy(addr, caCert string) { m.proxyAddr, m.proxyCACert = addr, caCert }
+func (m *MainAgent) SetEngagementPolicy(v db.EngagementPolicy, event func(string, string)) {
+	m.engagementPolicy, m.policyEvent = v, event
+}
 
 // SetWebSearch selects the web_search backend for the main agent (off by default).
 func (m *MainAgent) SetWebSearch(o WebSearchOpts) { m.webSearch = o }
@@ -134,10 +139,11 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
 	tools, def, cleanup := AugmentTools(ctx, "mainagent", base)
 	defer cleanup()
+	tools = applyEngagementPolicy(tools, m.engagementPolicy, m.policyEvent)
 	// this task's working directory <workDir>/tasks/<taskID>, created up front.
 	mainDir := ensureRunDir(m.workDir, taskID, 0)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, mainDir)
-	system, boundary := deferredSystem(mainAgentSystem(goal, m.workDir, mainDir), def)
+	system, boundary := deferredSystem(mainAgentSystem(goal, m.workDir, mainDir)+engagementPrompt(m.engagementPolicy), def)
 	opts := agentcore.Options{
 		Provider:        m.prov,
 		SystemPrompt:    system,

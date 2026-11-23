@@ -324,10 +324,20 @@ ON CONFLICT DO NOTHING`, r.kind, r.pattern, r.note); err != nil {
 // binding. Skills omitted here (e.g. playwright-cli) ship invisible by default —
 // the user turns them on per-agent when needed.
 var builtinSkillVisibility = map[string][]string{
-	"api-recon":               {"auto", "pentest", "worker"},
-	"adversarial-environment": {"auto", "pentest", "worker"},
-	"ai-target-research":      {"auto", "pentest", "worker"},
-	"lab-operations":          {"auto", "pentest", "worker"},
+	"api-recon":                   {"auto", "pentest", "worker"},
+	"adversarial-environment":     {"auto", "pentest", "worker"},
+	"ai-target-research":          {"auto", "pentest", "worker"},
+	"lab-operations":              {"auto", "pentest", "worker"},
+	"web-surface-mapping":         {"auto", "pentest", "worker"},
+	"auth-session-testing":        {"auto", "pentest", "worker"},
+	"authorization-testing":       {"auto", "pentest", "worker"},
+	"injection-testing":           {"auto", "pentest", "worker"},
+	"file-path-testing":           {"auto", "pentest", "worker"},
+	"api-protocol-testing":        {"auto", "pentest", "worker"},
+	"business-logic-testing":      {"auto", "pentest", "worker"},
+	"client-browser-testing":      {"auto", "pentest", "worker"},
+	"network-service-enumeration": {"auto", "pentest", "worker"},
+	"evidence-verification":       {"auto", "pentest", "worker", "mainagent"},
 }
 
 // seedBuiltinSkillVisibility binds the shipped built-in skills to their default

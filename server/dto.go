@@ -30,37 +30,38 @@ func rawString(raw json.RawMessage) string {
 
 // ---- Task (frontend "Task") ---- created_at as RFC3339, plus a derived status.
 type TaskDTO struct {
-	ID                 string             `json:"id"`
-	ExplorationID      int64              `json:"exploration_id"`
-	Name               string             `json:"name"` // optional task name; empty = unnamed
-	CategoryID         *int64             `json:"category_id,omitempty"`
-	CategoryName       string             `json:"category_name,omitempty"`
-	Pinned             bool               `json:"pinned"`
-	PinnedAt           string             `json:"pinned_at,omitempty"`
-	Description        string             `json:"description"`
-	Goal               string             `json:"goal"`
-	Status             string             `json:"status"` // created | running | paused | done | failed
-	CreatedAt          string             `json:"created_at"`
-	CreatedUnix        int64              `json:"created_unix"`       // created_at as unix seconds (for run-duration calc)
-	CompletedAt        string             `json:"completed_at"`       // RFC3339 finish time (done/failed); "" if unfinished
-	CompletedUnix      int64              `json:"completed_unix"`     // completed_at as unix seconds (0 if unfinished)
-	LastActivity       int64              `json:"last_activity_unix"` // unix seconds of the last activity (0 if none)
-	Paused             bool               `json:"paused"`
-	Queued             bool               `json:"queued"`
-	Tokens             TokenTotalDTO      `json:"tokens"` // whole-task token consumption
-	GoalsTotal         int                `json:"goals_total"`
-	GoalsMet           int                `json:"goals_met"`
-	InFlight           int                `json:"in_flight"`                // number of running workers (intents with state=running)
-	Findings           FindingSeverityDTO `json:"findings"`                 // findings recorded for this task (findings table, bucketed by severity)
-	LLMProfileID       *int64             `json:"llm_profile_id,omitempty"` // LLM profile used for this task; nil = default
-	LLMProfileIDs      []int64            `json:"llm_profile_ids"`
-	ActiveLLMProfileID *int64             `json:"active_llm_profile_id,omitempty"`
-	LLMFailoverState   string             `json:"llm_failover_state"`
-	LLMFailoverReason  string             `json:"llm_failover_reason,omitempty"`
-	SourceTaskIDs      []string           `json:"source_task_ids"`
-	ArchiveBlockedBy   string             `json:"archive_blocked_by_task_id,omitempty"`
-	CompanyIDs         []int64            `json:"company_ids"`
-	CoverageEnabled    bool               `json:"coverage_enabled"` // asset coverage feature switch (fixed at creation)
+	ID                 string              `json:"id"`
+	ExplorationID      int64               `json:"exploration_id"`
+	Name               string              `json:"name"` // optional task name; empty = unnamed
+	CategoryID         *int64              `json:"category_id,omitempty"`
+	CategoryName       string              `json:"category_name,omitempty"`
+	Pinned             bool                `json:"pinned"`
+	PinnedAt           string              `json:"pinned_at,omitempty"`
+	Description        string              `json:"description"`
+	Goal               string              `json:"goal"`
+	Status             string              `json:"status"` // created | running | paused | done | failed
+	CreatedAt          string              `json:"created_at"`
+	CreatedUnix        int64               `json:"created_unix"`       // created_at as unix seconds (for run-duration calc)
+	CompletedAt        string              `json:"completed_at"`       // RFC3339 finish time (done/failed); "" if unfinished
+	CompletedUnix      int64               `json:"completed_unix"`     // completed_at as unix seconds (0 if unfinished)
+	LastActivity       int64               `json:"last_activity_unix"` // unix seconds of the last activity (0 if none)
+	Paused             bool                `json:"paused"`
+	Queued             bool                `json:"queued"`
+	Tokens             TokenTotalDTO       `json:"tokens"` // whole-task token consumption
+	GoalsTotal         int                 `json:"goals_total"`
+	GoalsMet           int                 `json:"goals_met"`
+	InFlight           int                 `json:"in_flight"`                // number of running workers (intents with state=running)
+	Findings           FindingSeverityDTO  `json:"findings"`                 // findings recorded for this task (findings table, bucketed by severity)
+	LLMProfileID       *int64              `json:"llm_profile_id,omitempty"` // LLM profile used for this task; nil = default
+	LLMProfileIDs      []int64             `json:"llm_profile_ids"`
+	ActiveLLMProfileID *int64              `json:"active_llm_profile_id,omitempty"`
+	LLMFailoverState   string              `json:"llm_failover_state"`
+	LLMFailoverReason  string              `json:"llm_failover_reason,omitempty"`
+	SourceTaskIDs      []string            `json:"source_task_ids"`
+	ArchiveBlockedBy   string              `json:"archive_blocked_by_task_id,omitempty"`
+	CompanyIDs         []int64             `json:"company_ids"`
+	CoverageEnabled    bool                `json:"coverage_enabled"` // asset coverage feature switch (fixed at creation)
+	EngagementPolicy   db.EngagementPolicy `json:"engagement_policy"`
 }
 
 // FindingSeverityDTO is the per-severity finding count in the task list (critical/high/medium/low).
@@ -134,6 +135,7 @@ func taskDTO(t *Task, status string) TaskDTO {
 		SourceTaskIDs:      sourceIDs,
 		CompanyIDs:         lifecycle.CompanyIDs,
 		CoverageEnabled:    t.CoverageEnabled,
+		EngagementPolicy:   t.engagementPolicySnapshot(),
 	}
 }
 
@@ -595,6 +597,7 @@ type LLMProfileDTO struct {
 	APIKeyHint      string  `json:"api_key_hint,omitempty"`
 	RatePerSecond   float64 `json:"rate_per_second"`
 	RatePerMinute   float64 `json:"rate_per_minute"`
+	TokensPerMinute float64 `json:"tokens_per_minute"`
 	ContextWindowK  int     `json:"context_window_k"`
 	ThinkingType    string  `json:"thinking_type"`
 	ReasoningEffort string  `json:"reasoning_effort"`
@@ -630,6 +633,7 @@ func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 		APIKeyHint:       p.APIKeyHint,
 		RatePerSecond:    p.RatePerSecond,
 		RatePerMinute:    p.RatePerMinute,
+		TokensPerMinute:  p.TokensPerMinute,
 		ContextWindowK:   p.ContextWindowK,
 		ThinkingType:     p.ThinkingType,
 		ReasoningEffort:  p.ReasoningEffort,

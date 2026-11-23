@@ -120,7 +120,19 @@ type OracleSpec struct {
 	BodyContains   string            `json:"body_contains,omitempty"`
 	BodyRegex      string            `json:"body_regex,omitempty"`
 	Headers        map[string]string `json:"headers,omitempty"`
+	JSONCount      *JSONCountSpec    `json:"json_count,omitempty"`
 	Command        *CommandSpec      `json:"command,omitempty"`
+}
+
+// JSONCountSpec turns a lab's JSON state endpoint into a deterministic oracle.
+// Path is a dot-separated object path to an array (for example "data"). Match
+// selects array objects by exact field values. Exactly one of Exact or AtLeast
+// must be set.
+type JSONCountSpec struct {
+	Path    string         `json:"path,omitempty"`
+	Match   map[string]any `json:"match,omitempty"`
+	Exact   *int           `json:"exact,omitempty"`
+	AtLeast *int           `json:"at_least,omitempty"`
 }
 
 type EgressSpec struct {
@@ -159,6 +171,7 @@ type OracleResult struct {
 	Passed     bool   `json:"passed"`
 	Evidence   string `json:"evidence,omitempty"`
 	StatusCode int    `json:"status_code,omitempty"`
+	MatchCount *int   `json:"match_count,omitempty"`
 	Error      string `json:"error,omitempty"`
 }
 

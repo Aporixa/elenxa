@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -29,6 +30,21 @@ func (s *Server) taskResearchMetrics(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if tr := s.m.Traffic(); tr != nil {
+		policyEvents, policyErr := tr.PolicyEvents(taskID)
+		if policyErr != nil {
+			writeErr(w, http.StatusInternalServerError, policyErr.Error())
+			return
+		}
+		for _, policyEvent := range policyEvents {
+			impact := "none"
+			if policyEvent.Action == "http_block" || policyEvent.Action == "scanner_block" {
+				impact = "blocked"
+			}
+			metadata, _ := json.Marshal(researchmetrics.Event{EventType: "control_block", Summary: policyEvent.Action + ": " + policyEvent.Detail, Artifact: "engagement_policy", Corroboration: "deterministic host policy event", Impact: impact, Recovery: "request or command was delayed, bounded, or rejected by host middleware"})
+			controls = append(controls, db.ResearchControlEvent{Metadata: metadata})
+		}
 	}
 	assets := s.m.Assets()
 	if assets == nil {
@@ -102,6 +118,13 @@ func (s *Server) researchBenchmarkContext(task *Task, taskID int64, assets inter
 			ToolRules: []researchmetrics.ToolControl{}, GlobalAssetRules: []researchmetrics.AssetControl{},
 			TaskAssetRules: []researchmetrics.AssetControl{},
 		},
+	}
+	policy := task.engagementPolicySnapshot()
+	ctx.Controls.Engagement = researchmetrics.EngagementControl{
+		Profile: policy.Profile, UserAgentMode: policy.UserAgentMode, UserAgent: policy.UserAgent,
+		HTTPRequestsPerSecond: policy.HTTPRequestsPerSecond, HTTPBurst: policy.HTTPBurst,
+		HTTPMaxConcurrentPerHost: policy.HTTPMaxConcurrentPerHost, HTTPMaxRequests: policy.HTTPMaxRequests,
+		HTTPMinDelayMS: policy.HTTPMinDelayMS, ScannerMaxRate: policy.ScannerMaxRate, ScannerMaxConcurrency: policy.ScannerMaxConcurrency,
 	}
 	for _, role := range []string{"mainagent", "planner", "worker"} {
 		resolved, err := s.resolveTaskRoleLLM(task, role)

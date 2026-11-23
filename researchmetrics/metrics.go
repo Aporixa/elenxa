@@ -148,9 +148,23 @@ type AssetControl struct {
 }
 
 type ControlsContext struct {
-	ToolRules        []ToolControl  `json:"tool_rules"`
-	GlobalAssetRules []AssetControl `json:"global_asset_rules"`
-	TaskAssetRules   []AssetControl `json:"task_asset_rules"`
+	ToolRules        []ToolControl     `json:"tool_rules"`
+	GlobalAssetRules []AssetControl    `json:"global_asset_rules"`
+	TaskAssetRules   []AssetControl    `json:"task_asset_rules"`
+	Engagement       EngagementControl `json:"engagement"`
+}
+
+type EngagementControl struct {
+	Profile                  string  `json:"profile"`
+	UserAgentMode            string  `json:"user_agent_mode"`
+	UserAgent                string  `json:"user_agent,omitempty"`
+	HTTPRequestsPerSecond    float64 `json:"http_requests_per_second"`
+	HTTPBurst                int     `json:"http_burst"`
+	HTTPMaxConcurrentPerHost int     `json:"http_max_concurrent_per_host"`
+	HTTPMaxRequests          int     `json:"http_max_requests"`
+	HTTPMinDelayMS           int     `json:"http_min_delay_ms"`
+	ScannerMaxRate           int     `json:"scanner_max_rate"`
+	ScannerMaxConcurrency    int     `json:"scanner_max_concurrency"`
 }
 
 type Report struct {

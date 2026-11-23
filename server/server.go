@@ -340,6 +340,7 @@ func (s *Server) loadLLMConfig() (agent.Config, bool) {
 	}
 	cfg := agent.ConfigFrom(p.Format, p.Model, p.BaseURL, p.APIKey, p.Proxy)
 	cfg.RatePerSecond, cfg.RatePerMinute = p.RatePerSecond, p.RatePerMinute
+	cfg.TokensPerMinute = p.TokensPerMinute
 	cfg.ContextWindowK = p.ContextWindowK
 	cfg.ThinkingType = p.ThinkingType
 	cfg.ReasoningEffort = p.ReasoningEffort
@@ -385,7 +386,7 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 	}
 	newID, err := s.m.pg.SaveProfile(&db.LLMProfile{
 		ID: id, Name: "default", Format: format, Model: cfg.Model, BaseURL: cfg.BaseURL, Proxy: cfg.Proxy,
-		APIKey: cfg.APIKey, RatePerSecond: cfg.RatePerSecond, RatePerMinute: cfg.RatePerMinute,
+		APIKey: cfg.APIKey, RatePerSecond: cfg.RatePerSecond, RatePerMinute: cfg.RatePerMinute, TokensPerMinute: cfg.TokensPerMinute,
 		ContextWindowK: cfg.ContextWindowK, ThinkingType: cfg.ThinkingType, ReasoningEffort: cfg.ReasoningEffort, IsDefault: true,
 		Priority: priority, PoolExclude: poolExclude, Streaming: streaming,
 		MaxTokens: maxTokens, MaxTokensField: maxTokensField, SessionHeaderKey: sessionHeaderKey,
@@ -511,6 +512,7 @@ func (s *Server) loadProfileConfig(id int64) (agent.Config, bool) {
 	}
 	cfg := agent.ConfigFrom(p.Format, p.Model, p.BaseURL, p.APIKey, p.Proxy)
 	cfg.RatePerSecond, cfg.RatePerMinute = p.RatePerSecond, p.RatePerMinute
+	cfg.TokensPerMinute = p.TokensPerMinute
 	cfg.ContextWindowK = p.ContextWindowK
 	cfg.ThinkingType = p.ThinkingType
 	cfg.ReasoningEffort = p.ReasoningEffort
@@ -1292,17 +1294,18 @@ func (s *Server) getLLM(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	writeJSON(w, 200, map[string]any{
-		"configured":       s.llmOn,
-		"provider":         s.llmCfg.Provider(),
-		"model":            s.llmCfg.Model,
-		"base_url":         s.llmCfg.BaseURL,
-		"proxy":            s.llmCfg.Proxy,
-		"key_set":          s.llmCfg.APIKey != "",
-		"rate_per_second":  s.llmCfg.RatePerSecond,
-		"rate_per_minute":  s.llmCfg.RatePerMinute,
-		"context_window_k": s.llmCfg.ContextWindowK,
-		"thinking_type":    s.llmCfg.ThinkingType,
-		"reasoning_effort": s.llmCfg.ReasoningEffort,
+		"configured":        s.llmOn,
+		"provider":          s.llmCfg.Provider(),
+		"model":             s.llmCfg.Model,
+		"base_url":          s.llmCfg.BaseURL,
+		"proxy":             s.llmCfg.Proxy,
+		"key_set":           s.llmCfg.APIKey != "",
+		"rate_per_second":   s.llmCfg.RatePerSecond,
+		"rate_per_minute":   s.llmCfg.RatePerMinute,
+		"tokens_per_minute": s.llmCfg.TokensPerMinute,
+		"context_window_k":  s.llmCfg.ContextWindowK,
+		"thinking_type":     s.llmCfg.ThinkingType,
+		"reasoning_effort":  s.llmCfg.ReasoningEffort,
 	})
 }
 
@@ -1316,6 +1319,7 @@ func (s *Server) setLLM(w http.ResponseWriter, r *http.Request) {
 		APIKey          string  `json:"api_key"`
 		RatePerSecond   float64 `json:"rate_per_second"`
 		RatePerMinute   float64 `json:"rate_per_minute"`
+		TokensPerMinute float64 `json:"tokens_per_minute"`
 		ContextWindowK  int     `json:"context_window_k"`
 		ThinkingType    string  `json:"thinking_type"`
 		ReasoningEffort string  `json:"reasoning_effort"`
@@ -1326,6 +1330,7 @@ func (s *Server) setLLM(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := agent.ConfigFrom(req.Provider, req.Model, req.BaseURL, req.APIKey, req.Proxy)
 	cfg.RatePerSecond, cfg.RatePerMinute = req.RatePerSecond, req.RatePerMinute
+	cfg.TokensPerMinute = req.TokensPerMinute
 	cfg.ThinkingType = req.ThinkingType
 	cfg.ReasoningEffort = req.ReasoningEffort
 	if k := req.ContextWindowK; k > 0 { // 0 = keep default (200K); cap at 1M
@@ -1446,18 +1451,19 @@ func truncateReply(s string) string {
 }
 
 type createTaskReq struct {
-	Name                 string   `json:"name,omitempty"` // optional task name; omitted/empty = untitled
-	CategoryID           *int64   `json:"category_id,omitempty"`
-	Description          string   `json:"description"`
-	Goal                 string   `json:"goal"`
-	LLMProfileID         *int64   `json:"llm_profile_id,omitempty"`    // LLM config to run this task with; omitted/null = use the active config
-	LLMProfileIDs        []int64  `json:"llm_profile_ids,omitempty"`   // ordered task-level config chain; the first entry takes effect initially
-	SourceTaskIDs        []string `json:"source_task_ids,omitempty"`   // source tasks inherited directly and read-only only
-	CompanyIDs           []int64  `json:"company_ids,omitempty"`       // link company scope and snapshot-link the companies' current assets; doesn't copy assets or force intents
-	TimeoutSeconds       int      `json:"timeout_seconds"`             // task-level timeout (seconds); 0/omitted = no limit
-	PlanHeartbeatSeconds int      `json:"plan_heartbeat_seconds"`      // planner heartbeat trigger interval (seconds); 0/omitted = default 600 (10min); minimum = default = 600, lower values are raised to 600
-	SeedFirstIntent      *bool    `json:"seed_first_intent,omitempty"` // on creation, issue one seed intent directly (content = description + goal) so a worker starts right away without waiting for the first planner round; omitted/null = off by default, standard plan-then-execute. Only enabled when explicitly true (for CTFs often solved in one work item, this skips the planner round before starting).
-	CoverageEnabled      *bool    `json:"coverage_enabled,omitempty"`  // asset coverage feature; omitted/null = on by default (true). false = disable coverage computation/display/automatic scope accumulation + hide add_task_scope/list_untested_assets. Company links are unaffected.
+	Name                 string              `json:"name,omitempty"` // optional task name; omitted/empty = untitled
+	CategoryID           *int64              `json:"category_id,omitempty"`
+	Description          string              `json:"description"`
+	Goal                 string              `json:"goal"`
+	LLMProfileID         *int64              `json:"llm_profile_id,omitempty"`    // LLM config to run this task with; omitted/null = use the active config
+	LLMProfileIDs        []int64             `json:"llm_profile_ids,omitempty"`   // ordered task-level config chain; the first entry takes effect initially
+	SourceTaskIDs        []string            `json:"source_task_ids,omitempty"`   // source tasks inherited directly and read-only only
+	CompanyIDs           []int64             `json:"company_ids,omitempty"`       // link company scope and snapshot-link the companies' current assets; doesn't copy assets or force intents
+	TimeoutSeconds       int                 `json:"timeout_seconds"`             // task-level timeout (seconds); 0/omitted = no limit
+	PlanHeartbeatSeconds int                 `json:"plan_heartbeat_seconds"`      // planner heartbeat trigger interval (seconds); 0/omitted = default 600 (10min); minimum = default = 600, lower values are raised to 600
+	SeedFirstIntent      *bool               `json:"seed_first_intent,omitempty"` // on creation, issue one seed intent directly (content = description + goal) so a worker starts right away without waiting for the first planner round; omitted/null = off by default, standard plan-then-execute. Only enabled when explicitly true (for CTFs often solved in one work item, this skips the planner round before starting).
+	CoverageEnabled      *bool               `json:"coverage_enabled,omitempty"`  // asset coverage feature; omitted/null = on by default (true). false = disable coverage computation/display/automatic scope accumulation + hide add_task_scope/list_untested_assets. Company links are unaffected.
+	EngagementPolicy     db.EngagementPolicy `json:"engagement_policy"`
 	Scope                []struct {
 		Kind   string `json:"kind"`
 		Value  string `json:"value"`
@@ -1520,12 +1526,18 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "Invalid task-level intercept rules: "+err.Error())
 		return
 	}
+	engagementPolicy, err := db.NormalizeEngagementPolicy(req.EngagementPolicy)
+	if err != nil {
+		writeErr(w, 400, "Invalid engagement policy: "+err.Error())
+		return
+	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
 		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
 		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
 		TimeoutSeconds: req.TimeoutSeconds, PlanHeartbeatSeconds: req.PlanHeartbeatSeconds,
-		CoverageEnabled: req.CoverageEnabled,
-		InterceptRules:  interceptRules,
+		CoverageEnabled:  req.CoverageEnabled,
+		EngagementPolicy: engagementPolicy,
+		InterceptRules:   interceptRules,
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrTaskCategoryInvalid) || errors.Is(err, db.ErrTaskCategoryNotFound) {
