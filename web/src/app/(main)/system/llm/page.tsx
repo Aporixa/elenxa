@@ -319,6 +319,7 @@ function ProfileSheet({
   const [keyHint, setKeyHint] = React.useState("");
   const [rps, setRps] = React.useState("0");
   const [rpm, setRpm] = React.useState("0");
+  const [tpm, setTpm] = React.useState("0");
   const [cw, setCw] = React.useState("0"); // context window (K tokens); 0 = default 200K
   const [thinkingType, setThinkingType] = React.useState(NONE);
   const [effort, setEffort] = React.useState(NONE);
@@ -346,6 +347,7 @@ function ProfileSheet({
     setProxy(profile?.proxy ?? "");
     setRps(String(profile?.rate_per_second ?? 0));
     setRpm(String(profile?.rate_per_minute ?? 0));
+    setTpm(String(profile?.tokens_per_minute ?? 0));
     setCw(String(profile?.context_window_k ?? 0));
     setThinkingType(fromStore(profile?.thinking_type));
     setEffort(fromStore(profile?.reasoning_effort));
@@ -433,6 +435,7 @@ function ProfileSheet({
         api_key: apiKey,
         rate_per_second: Number(rps) || 0,
         rate_per_minute: Number(rpm) || 0,
+        tokens_per_minute: Number(tpm) || 0,
         context_window_k: Number(cw) || 0,
         thinking_type: toStore(thinkingType),
         reasoning_effort: toStore(effort),
@@ -605,7 +608,7 @@ function ProfileSheet({
             />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <div className="grid gap-2">
               <Label htmlFor="p-rps">Rate limit / sec</Label>
               <Input id="p-rps" type="number" min={0} value={rps} onChange={(e) => setRps(e.target.value)} />
@@ -613,6 +616,10 @@ function ProfileSheet({
             <div className="grid gap-2">
               <Label htmlFor="p-rpm">Rate limit / min</Label>
               <Input id="p-rpm" type="number" min={0} value={rpm} onChange={(e) => setRpm(e.target.value)} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="p-tpm">Token limit / min</Label>
+              <Input id="p-tpm" type="number" min={0} value={tpm} onChange={(e) => setTpm(e.target.value)} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="p-cw">Context window (K)</Label>
@@ -628,8 +635,7 @@ function ProfileSheet({
             </div>
           </div>
           <p className="-mt-2 text-muted-foreground text-xs">
-            Rate limit 0 = unlimited, shared by all agents. Context window is in K (thousand tokens), 0 = default 200K, max 1000 (i.e.
-            1M); setting it too high prevents compaction from triggering.
+            Limits are shared by all agents using this profile; 0 = unlimited. Token/minute is a conservative serialized-input estimate, so set it below the vendor TPM ceiling to leave room for output and tokenizer variance. Context window is in K (thousand tokens), 0 = default 200K, max 1000 (i.e. 1M).
           </p>
 
           <div className="grid gap-3 rounded-lg border p-3">
@@ -929,7 +935,7 @@ export default function LLMPage() {
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-6 text-muted-foreground text-xs">
                       {p.api_key_hint && <span>{p.api_key_hint}</span>}
                       <span>
-                        {p.rate_per_second}/s · {p.rate_per_minute}/min
+                        {p.rate_per_second}/s · {p.rate_per_minute}/min · {p.tokens_per_minute ?? 0} TPM
                       </span>
                       {p.proxy && <span className="truncate">Proxy {p.proxy}</span>}
                       {p.reasoning_effort && (

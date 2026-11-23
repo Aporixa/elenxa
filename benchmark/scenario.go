@@ -94,6 +94,17 @@ func ValidateScenario(s Scenario) error {
 			return fmt.Errorf("invalid oracle body_regex: %w", err)
 		}
 	}
+	if count := s.Oracle.JSONCount; count != nil {
+		if s.Oracle.Type != "http" {
+			return fmt.Errorf("oracle.json_count requires an http oracle")
+		}
+		if (count.Exact == nil) == (count.AtLeast == nil) {
+			return fmt.Errorf("oracle.json_count requires exactly one of exact or at_least")
+		}
+		if count.Exact != nil && *count.Exact < 0 || count.AtLeast != nil && *count.AtLeast < 0 {
+			return fmt.Errorf("oracle.json_count thresholds cannot be negative")
+		}
+	}
 	if s.Oracle.Type == "command" && (s.Oracle.Command == nil || s.Oracle.Command.Executable == "") {
 		return fmt.Errorf("command oracle executable is required")
 	}

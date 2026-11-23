@@ -664,7 +664,7 @@ func (s *Server) reseedMainAgentPrompt() {
 // Guarded by a settings flag → runs once. Fresh DBs need nothing (SeedPromptIfEmpty already seeds the latest default). Fully isomorphic to
 // reseedGoalsPrompt.
 func (s *Server) reseedPlannerPrompt() {
-	const flag = "planner_prompt_compact_realistic_v2"
+	const flag = "planner_prompt_budget_parallelism_v3"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -685,7 +685,7 @@ func (s *Server) reseedPlannerPrompt() {
 		log.Printf("[prompts] failed to refresh planner prompt to new default: %v", err)
 		return
 	}
-	log.Printf("[prompts] appended new default version of planner prompt (trimmed/restructured + restraint downgraded to dedup + depth first + negative-review upper bound, one-time)")
+	log.Printf("[prompts] appended new default version of planner prompt (budget-bound completion + independent-route parallelism floor, one-time)")
 }
 
 // reseedWorkerPrompt refreshes the worker prompt to the [current code default] - the default body's record_fact section dropped the whole sentence "for negative conclusions

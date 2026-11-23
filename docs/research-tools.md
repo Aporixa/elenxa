@@ -16,6 +16,14 @@ The result includes the corpus version, SHA-256 digest, record IDs, procedures, 
 
 The first catalog version covers control-path checks, indirect prompt injection, decoy credentials, false success, conflicting instructions, and AI-target benchmark separation. Add new records as versioned data. Do not add a large payload collection to an agent prompt.
 
+Review external datasets before importing records. Preserve the source, version, license, and record provenance. Import a selected, deduplicated subset instead of embedding a complete mixed corpus in prompts.
+
+## Check the shell runtime
+
+Every worker receives a code-owned list of installed and missing shell commands. The list reflects the running container, not a model assumption. `runtime_tool_inventory` can refresh the full list or one category.
+
+A command in the installed list is available through `Bash` or an interactive shell. It is not a separate JSON tool. Emit independent tool calls together when you need concurrency. Do not call a wrapper tool named `parallel`.
+
 ## Import scanner evidence
 
 `import_scanner_results` reads a relative file under the current task working directory. The planner and workers can import these formats:

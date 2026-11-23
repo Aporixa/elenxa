@@ -12,11 +12,15 @@ import (
 // the same Provider instance (one limiter per provider), so any number of
 // concurrent agents using one Provider are bounded by a single limit.
 //
-// Only the logical request is counted: retries inside a single Stream call do
-// not consume additional tokens.
+// Only the logical request is counted: transport retries inside a single Stream
+// call do not reserve the prompt again.
 type RateLimit struct {
 	PerSecond float64 // max requests per second (0 = unlimited)
 	PerMinute float64 // max requests per minute (0 = unlimited)
+	// TokensPerMinute caps estimated serialized request tokens across all callers
+	// sharing this provider. It is an admission-control estimate, not billing
+	// usage: output is unknown before the request and provider tokenizers differ.
+	TokensPerMinute float64
 	// Burst is the per-second bucket capacity (how many may go at once before
 	// smoothing). 0 = default to PerSecond.
 	Burst float64
@@ -31,11 +35,12 @@ type RateLimit struct {
 type rateLimiter struct {
 	sec    *bucket
 	min    *bucket
+	tokens *bucket
 	onWait func(time.Duration)
 }
 
 func newRateLimiter(rl RateLimit) *rateLimiter {
-	if rl.PerSecond <= 0 && rl.PerMinute <= 0 {
+	if rl.PerSecond <= 0 && rl.PerMinute <= 0 && rl.TokensPerMinute <= 0 {
 		return nil // unlimited
 	}
 	l := &rateLimiter{onWait: rl.OnWait}
@@ -49,22 +54,31 @@ func newRateLimiter(rl RateLimit) *rateLimiter {
 	if rl.PerMinute > 0 {
 		l.min = newBucket(rl.PerMinute/60.0, rl.PerMinute) // burst = a full minute
 	}
+	if rl.TokensPerMinute > 0 {
+		l.tokens = newBucket(rl.TokensPerMinute/60.0, rl.TokensPerMinute)
+	}
 	return l
 }
 
-// Wait blocks until one request is permitted by both windows, or ctx is done.
+// Wait blocks until one request and its estimated input tokens are permitted by
+// all configured windows, or ctx is done.
 // A nil receiver returns immediately (unlimited).
-func (l *rateLimiter) Wait(ctx context.Context) error {
+func (l *rateLimiter) Wait(ctx context.Context, estimatedTokens ...float64) error {
 	if l == nil {
 		return nil
 	}
 	var d time.Duration
 	if l.sec != nil {
-		d = l.sec.reserve()
+		d = l.sec.reserveN(1)
 	}
 	if l.min != nil {
-		if dm := l.min.reserve(); dm > d {
+		if dm := l.min.reserveN(1); dm > d {
 			d = dm
+		}
+	}
+	if l.tokens != nil && len(estimatedTokens) > 0 && estimatedTokens[0] > 0 {
+		if dt := l.tokens.reserveN(estimatedTokens[0]); dt > d {
+			d = dt
 		}
 	}
 	if d <= 0 {
@@ -91,9 +105,9 @@ func (l *rateLimiter) report(d time.Duration) {
 	}
 }
 
-// bucket is a token bucket: tokens refill at rate/sec up to burst; reserve()
-// takes one token (going negative to reserve future capacity) and returns how
-// long the caller must wait for it.
+// bucket is a token bucket: tokens refill at rate/sec up to burst; reserveN
+// reserves the requested amount (going negative for future capacity) and
+// returns how long the caller must wait for it.
 type bucket struct {
 	mu     sync.Mutex
 	rate   float64 // tokens per second
@@ -106,7 +120,7 @@ func newBucket(rate, burst float64) *bucket {
 	return &bucket{rate: rate, burst: burst, tokens: burst, last: time.Now()}
 }
 
-func (b *bucket) reserve() time.Duration {
+func (b *bucket) reserveN(n float64) time.Duration {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := time.Now()
@@ -115,7 +129,7 @@ func (b *bucket) reserve() time.Duration {
 		b.tokens = b.burst
 	}
 	b.last = now
-	b.tokens--
+	b.tokens -= n
 	if b.tokens >= 0 {
 		return 0
 	}
@@ -140,7 +154,7 @@ type rateLimitedProvider struct {
 
 func (rp *rateLimitedProvider) Stream(ctx context.Context, req CompletionRequest) iter.Seq2[StreamEvent, error] {
 	return func(yield func(StreamEvent, error) bool) {
-		if err := rp.l.Wait(ctx); err != nil {
+		if err := rp.l.Wait(ctx, estimateRequestTokens(req)); err != nil {
 			yield(StreamEvent{}, err)
 			return
 		}
@@ -153,8 +167,35 @@ func (rp *rateLimitedProvider) Stream(ctx context.Context, req CompletionRequest
 }
 
 func (rp *rateLimitedProvider) Complete(ctx context.Context, req CompletionRequest) (Message, string, Usage, error) {
-	if err := rp.l.Wait(ctx); err != nil {
+	if err := rp.l.Wait(ctx, estimateRequestTokens(req)); err != nil {
 		return Message{}, "", Usage{}, err
 	}
 	return rp.p.Complete(ctx, req)
+}
+
+// estimateRequestTokens is intentionally conservative and tokenizer-neutral.
+// JSON/provider framing adds overhead, so use roughly 3.5 UTF-8 bytes per token.
+func estimateRequestTokens(req CompletionRequest) float64 {
+	n := 0
+	for _, s := range req.System {
+		n += len(s)
+	}
+	for _, m := range req.Messages {
+		n += contentBlocksLen(m.Content)
+	}
+	for _, tool := range req.Tools {
+		n += len(tool.Name) + len(tool.Description) + len(tool.InputSchema)*120
+	}
+	return float64(n*2) / 7
+}
+
+func contentBlocksLen(blocks []ContentBlock) int {
+	n := 0
+	for _, block := range blocks {
+		n += len(block.Text) + len(block.Thinking) + len(block.Input) + len(block.Name)
+		if len(block.Content) > 0 {
+			n += contentBlocksLen(block.Content)
+		}
+	}
+	return n
 }

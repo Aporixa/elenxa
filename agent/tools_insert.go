@@ -643,6 +643,7 @@ func splitLines(s string) []string {
 // WorkerTools returns the tool set for a work agent.
 func (t *ToolSet) WorkerTools() []actool.CoreTool {
 	return []actool.CoreTool{
+		runtimeInventoryTool(),
 		researchKnowledgeTool(),
 		// list_findings is kept: check this task's confirmed findings before reporting, to avoid reporting the same finding twice.
 		t.listFindings(),

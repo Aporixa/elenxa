@@ -595,6 +595,7 @@ type LLMProfileDTO struct {
 	APIKeyHint      string  `json:"api_key_hint,omitempty"`
 	RatePerSecond   float64 `json:"rate_per_second"`
 	RatePerMinute   float64 `json:"rate_per_minute"`
+	TokensPerMinute float64 `json:"tokens_per_minute"`
 	ContextWindowK  int     `json:"context_window_k"`
 	ThinkingType    string  `json:"thinking_type"`
 	ReasoningEffort string  `json:"reasoning_effort"`
@@ -630,6 +631,7 @@ func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 		APIKeyHint:       p.APIKeyHint,
 		RatePerSecond:    p.RatePerSecond,
 		RatePerMinute:    p.RatePerMinute,
+		TokensPerMinute:  p.TokensPerMinute,
 		ContextWindowK:   p.ContextWindowK,
 		ThinkingType:     p.ThinkingType,
 		ReasoningEffort:  p.ReasoningEffort,

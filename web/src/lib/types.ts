@@ -1034,6 +1034,7 @@ export interface LLMProfile {
   api_key_hint?: string;
   rate_per_second: number;
   rate_per_minute: number;
+  tokens_per_minute: number;
   context_window_k?: number;
   // Thinking switch (thinking.type): "" = not sent (default) | "disabled" = off | "enabled" = on
   thinking_type?: string;

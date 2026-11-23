@@ -370,6 +370,7 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     api_key_hint     TEXT,
     rate_per_second  DOUBLE PRECISION NOT NULL DEFAULT 0,
     rate_per_minute  DOUBLE PRECISION NOT NULL DEFAULT 0,
+    tokens_per_minute DOUBLE PRECISION NOT NULL DEFAULT 0,
     context_window_k INTEGER NOT NULL DEFAULT 0,
     -- Thinking parameters are split into two independent fields: thinking_type = thinking switch (''/disabled/enabled),
     -- reasoning_effort = thinking effort (''/low/medium/high/xhigh/max); they do not affect each other.
@@ -406,6 +407,7 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS tokens_per_minute DOUBLE PRECISION NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_one_default ON llm_profiles(is_default) WHERE is_default;
 DROP TRIGGER IF EXISTS trg_llm_upd ON llm_profiles;
 CREATE TRIGGER trg_llm_upd BEFORE UPDATE ON llm_profiles

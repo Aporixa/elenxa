@@ -12,7 +12,7 @@
 #
 # Network access during the build is limited to: the base image pulls (by
 # digest), npm registry tarballs pinned by package-lock.json integrity hashes,
-# and Debian apt packages for the runtime stage.
+# Debian apt packages and pinned Python wheels for the runtime stage.
 
 # ── Stage 1: web UI (Next.js static export) ─────────────────────────────────
 FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS web
@@ -53,8 +53,21 @@ FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf22
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates ripgrep curl wget vim-tiny git jq unzip \
       dnsutils iputils-ping netcat-openbsd inetutils-telnet whois nmap \
+      nodejs openssl file procps socat xmlstarlet \
+      ffuf sqlmap whatweb \
       chromium fonts-liberation libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
+
+# Python's standard library remains the default for small probes, but workers
+# routinely need HTTP and HTML/XML parsing for bounded lab scripts. Keep this
+# list short and pinned; larger scanners belong in the Debian package layer or
+# an explicitly configured MCP/custom tool, not an unbounded Kali-style image.
+COPY packaging/runtime-requirements.txt /tmp/runtime-requirements.txt
+RUN python -m pip install --no-cache-dir --disable-pip-version-check \
+      -r /tmp/runtime-requirements.txt \
+ && rm /tmp/runtime-requirements.txt \
+ && python -c "import bs4, lxml, requests" \
+ && command -v node ffuf sqlmap whatweb >/dev/null
 
 # Raw-socket tools as a non-root user:
 #   - ping: Docker sets net.ipv4.ping_group_range so unprivileged ICMP sockets

@@ -52,7 +52,9 @@ The importer accepts concrete inline tests in JSON or YAML. It rejects generatio
 
 ## Adapters
 
-The lab oracle proves outcome independently of Elenxa. An HTTP oracle checks status and optional body text or regular expression. A command oracle succeeds only when an explicitly named executable exits zero. Commands are never evaluated by a shell.
+The lab oracle proves outcome independently of Elenxa. An HTTP oracle checks status and optional body text or a regular expression. Its optional `json_count` rule selects an array by dot-separated path, matches exact object fields, and checks an `exact` or `at_least` count. For example, `benchmark/scenarios/juiceshop-coverage.example.json` counts solved Juice Shop challenges. A command oracle succeeds only when an explicitly named executable exits zero. Commands are never evaluated by a shell.
+
+Use an open-ended goal with a task timeout for timed coverage trials. Elenxa rejects an early `prove_goal` call for goals such as "find as many as possible." The deadline coordinator performs the final planner round. The independent oracle then measures the lab state.
 
 Egress observers establish attempted network destinations independently of task success:
 

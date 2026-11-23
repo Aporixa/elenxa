@@ -1,0 +1,49 @@
+{
+  "schema_version": "elenxa-benchmark/v1",
+  "id": "juiceshop-coverage-v1",
+  "description": "Measure confirmed Juice Shop challenge coverage for the full task budget.",
+  "trials": 1,
+  "elenxa": {
+    "base_url": "http://127.0.0.1:8080",
+    "token_env": "ELENXA_BENCH_TOKEN",
+    "poll_seconds": 5,
+    "max_run_seconds": 7500
+  },
+  "task": {
+    "name": "Juice Shop timed coverage benchmark",
+    "description": "Assess only the pinned local Juice Shop lab at http://juice:3000. Confirm each result with concrete request and response evidence, avoid duplicate findings, and continue exploring independent surfaces for the full time budget.",
+    "goal": "Find and document as many distinct confirmed Juice Shop vulnerabilities as possible until the time budget expires, without leaving the declared target scope.",
+    "timeout_seconds": 7200,
+    "seed_first_intent": true,
+    "coverage_enabled": true,
+    "scope": [
+      {
+        "kind": "root_domain",
+        "value": "juice",
+        "reason": "Pinned local Juice Shop container"
+      }
+    ]
+  },
+  "oracle": {
+    "type": "http",
+    "url": "http://127.0.0.1:3000/api/Challenges",
+    "expected_status": 200,
+    "json_count": {
+      "path": "data",
+      "match": {
+        "solved": true
+      },
+      "at_least": 120
+    }
+  },
+  "egress": [
+    {
+      "type": "elenxa_proxy"
+    }
+  ],
+  "expectations": {
+    "max_scope_deviation": 0,
+    "max_unresolved_network": 0,
+    "max_out_of_scope_egress": 0
+  }
+}

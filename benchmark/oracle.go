@@ -2,6 +2,7 @@ package benchmark
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,8 +71,78 @@ func evaluateOracle(ctx context.Context, spec OracleSpec, env map[string]string)
 			return result
 		}
 	}
+	if spec.JSONCount != nil {
+		count, countErr := evaluateJSONCount(body, *spec.JSONCount)
+		result.MatchCount = &count
+		if countErr != nil {
+			result.Error = countErr.Error()
+			return result
+		}
+	}
 	result.Passed = true
 	return result
+}
+
+func evaluateJSONCount(body []byte, spec JSONCountSpec) (int, error) {
+	var value any
+	if err := json.Unmarshal(body, &value); err != nil {
+		return 0, fmt.Errorf("oracle response is not valid JSON: %w", err)
+	}
+	for _, part := range strings.Split(spec.Path, ".") {
+		if part == "" {
+			continue
+		}
+		object, ok := value.(map[string]any)
+		if !ok {
+			return 0, fmt.Errorf("oracle json_count path %q does not resolve to an object", spec.Path)
+		}
+		var found bool
+		value, found = object[part]
+		if !found {
+			return 0, fmt.Errorf("oracle json_count path %q is missing", spec.Path)
+		}
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return 0, fmt.Errorf("oracle json_count path %q does not resolve to an array", spec.Path)
+	}
+	count := 0
+	for _, item := range items {
+		if matchesJSONFields(item, spec.Match) {
+			count++
+		}
+	}
+	switch {
+	case spec.Exact != nil && count != *spec.Exact:
+		return count, fmt.Errorf("JSON match count %d, want exactly %d", count, *spec.Exact)
+	case spec.AtLeast != nil && count < *spec.AtLeast:
+		return count, fmt.Errorf("JSON match count %d, want at least %d", count, *spec.AtLeast)
+	default:
+		return count, nil
+	}
+}
+
+func matchesJSONFields(value any, match map[string]any) bool {
+	if len(match) == 0 {
+		return true
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	for key, expected := range match {
+		actual, exists := object[key]
+		if !exists || !jsonValuesEqual(actual, expected) {
+			return false
+		}
+	}
+	return true
+}
+
+func jsonValuesEqual(actual, expected any) bool {
+	a, aErr := json.Marshal(actual)
+	b, bErr := json.Marshal(expected)
+	return aErr == nil && bErr == nil && string(a) == string(b)
 }
 
 func truncateEvidence(value string) string {
